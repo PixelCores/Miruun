@@ -1,69 +1,59 @@
 # Miruun
 
-Miruun 是实验性的原生 macOS 菜单栏工具：为一个已存在的 Codex 对话切换已配置的 provider，保留原线程 ID、项目和模型，并用独立后端进程检查设置是否持久化。
+Miruun 是原生 macOS 菜单栏小工具，面向这样的工作流：在 Codex GUI 使用账号 A 建立对话，通过 CC Switch + CLIProxyAPI 切到账号 B，重启 Codex 后继续原来的工作。
 
-应用使用 Swift、AppKit、Foundation、CryptoKit 和系统 SQLite3，没有第三方 Swift 包或 Python 运行依赖。它调用用户选择的本机 Codex 后端。后端验证通过后，仍需用户在原 GUI 中主动续聊，核对上下文与实际请求路径。
+一次启用后，Miruun 在后台维护统一的本地代理入口，不需要选择某一条对话。当前实现覆盖同一 `CODEX_HOME` 中由内置 `openai` 创建的所有历史；保留原 ID、项目、模型和历史文件。它不会扫描或批量改写对话，也不提供账户池或新的代理服务。
+
+**当前是实验实现：本机配置守护与合成测试不等于已经通过真实账号 A → B 的 GUI 续聊验收。** 自定义 provider 历史、正在运行的会话热切换、跨账号加密上下文和上游账户归属仍有独立边界，见 [验证记录](VALIDATION.md)。
+
+## 使用
+
+1. 将打包后的 `Miruun.app` 放到固定位置并打开，选择 Codex 实际使用的数据目录，通常为 `~/.codex`。
+2. 勾选“启用后台连续性守护”。也可选择“登录 Mac 时启动 Miruun”。之后关闭窗口即可，日常状态只显示在菜单栏。
+3. 在 CC Switch 配好 CLIProxyAPI 的本地 Responses 入口与代理 API key，由代理管理账号 B。Miruun 不替你登录，也不写入凭据。
+4. 等待菜单栏提示配置已就绪，再重启 Codex GUI，直接打开任意原生 `openai` 历史继续。
+5. 首次实际使用时，检查多个原对话的上下文和同次代理请求的上游账号。成功响应或模型名称不能单独证明请求由账号 B 处理。
+
+守护每两秒检查配置和认证文件；两次稳定采样后才调整配置。暂停或退出守护会保留当前配置；需要更换数据目录时先暂停。回到 OAuth 登录时，守护仅移除自己标记的代理入口；遇到未标记的地址覆盖会提示处理，不擅自恢复旧文件。正常检查没有弹窗、通知或网络请求，不会启动 Codex 后端。登录项使用 macOS 13+ 的 `SMAppService`，未经签名构建的系统注册行为仍需实机验收。
+
+## 配置契约
+
+根 `model_provider` 保持为 `openai`，根 `openai_base_url` 指向 CC Switch 当前选中的本地代理。Codex 冷恢复保留历史 provider ID，再从当前配置解析其地址，所以无需逐条迁移历史。所有新建对话也继续使用相同 ID；之后切换账号由代理负责。
+
+当前仅接受明确的本地入口（`localhost`、`127.0.0.1`、`[::1]`），Responses 协议，以及文件中的 API-key 认证。自定义 provider 必须明确使用全局 OpenAI 认证。无法保留的自定义认证、请求头、查询参数、profile、Keychain 和未知配置语法会显示原因并停止调整；不会猜测有效运行配置。已有自定义 provider 历史不会自动改为 `openai`，其 GUI 可见性也不能由本工具保证。
+
+Miruun 只写所选目录的 `config.toml`，读 `auth.json` 判断认证方式。状态与日志不展示凭据，也不会备份认证文件；配置文件本身可能含敏感字段，因此原配置备份只保存在本机 `~/Library/Application Support/Miruun/ConfigBackups/`（目录 0700、文件 0600）。配置修改采用临时文件、重核对和原子替换；这不能给不合作的外部写入者提供事务锁。请等 CC Switch 完成切换、Miruun 配置就绪后再启动 Codex。
+
+[OpenAI 官方高级配置](https://developers.openai.com/codex/config-advanced/)说明 `openai_base_url` 的用途，但它不改变认证。源码核对基于 Codex 0.159.2；GUI 外部认证、管理员策略、启动参数和不同数据目录可能影响实际行为。原模型、Responses/WebSocket 与历史中的加密内容也需要目标代理和账号支持。
 
 ## 构建与开发
 
-要求 macOS 13+、Swift 5.9+ 和包含 XCTest 的完整 Xcode。仅有 Command Line Tools 时，可能可以编译应用，但不能执行本项目的 XCTest；构建脚本会明确停止。
-
-在仓库根目录运行，或双击 `Build App.command`：
-
-```bash
-bash "Build App.command"
-```
-
-如果系统当前选择了 Command Line Tools，而 Xcode 位于 `/Applications/Xcode.app`，可以只为这次构建指定开发工具：
+要求 macOS 13+、Swift 5.9+ 和包含 XCTest 的完整 Xcode。在仓库根目录执行，或双击 `Build App.command`：
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer bash "Build App.command"
 ```
 
-脚本先执行全部测试，再编译 release，将两个可执行文件组装为 `dist/<时间戳>/Miruun.app`，最后在 Finder 中显示。测试或编译失败即停止。它不会安装应用、启动 Codex 后端或读取真实会话。每次输出独立目录。
-
-开发时可直接运行：
+脚本先运行全部测试，再编译 Release 并组装 `dist/<时间戳>/Miruun.app`。它不安装、不启动应用，也不读取真实 Codex 数据。每次输出独立目录。
 
 ```bash
 swift test
 swift build -c release
+bash scripts/build-app.sh --no-reveal
 ```
 
-CI 或不需要打开 Finder 时使用 `bash scripts/build-app.sh --no-reveal`。在禁止 SwiftPM 子进程沙盒的受限开发环境中可显式追加 `--disable-sandbox`；此参数不改变应用安全门。构建缓存保存在仓库 `.build/` 内。
+受限开发环境可为脚本显式追加 `--disable-sandbox`。开发工具中的 SwiftPM 沙盒与应用的数据保护是独立设置。请运行完整 `.app`；`swift run Miruun` 缺少正确的 bundle 信息，不能启用守护。
 
-请运行完整 `.app` 使用界面。`swift run Miruun` 缺少应用包元数据；`MiruunEngine` 是内置协议 helper，其独立调用不提供界面的持久未决标记保护。
-
-## 使用流程
-
-1. 在原 GUI 中核对标题、完整 ID、项目和模型，正常退出相关客户端与后端，并保持关闭。
-2. 在 Miruun 中明确选择实际后端和对应 `CODEX_HOME`。启动时仅发现应用候选，不自动执行候选或读取会话。
-3. 点击“读取对话与供应商”，按真实标题查找原对话；归档对话单独查询。列表最多返回一页 100 条，仅包含身份元数据。
-4. 选择配置中的目标 provider，并在接入配置中独立核对实际地址。菜单显示脱敏 origin，不证明网关或环境覆盖后的路由。
-5. 独立选择预期项目，确认客户端关闭，运行预检。确认面板绑定完整身份、原模型、目标、后端版本与配置摘要；有效期十分钟，只能使用一次。
-6. 逐项确认后，工具备份选中 rollout 和共享状态数据库，执行同 ID 恢复，再关闭变更后端，以新的进程、不带 provider/model 覆盖地验证。
-7. 后端验证通过后，重新打开原 GUI 对话，由用户主动续聊并核对实际请求路径。
-
-当前变更候选严格限于 `codex-cli 0.159.2` 和 `codex-cli 0.159.0-alpha.7`，还需输入协议与实际功能检查通过。版本与 schema 匹配不等于二进制来源认证或运行兼容保证。
-
-## 数据与失败处理
-
-Miruun 不读取或修改 `auth.json`，不管理账户、额度或登录。所选后端自身可能读取认证配置并联网。启动、恢复和验证即使没有 `turn/start`，仍可能传输基础指令、工具元数据并产生费用；主动续聊还可能发送历史。
-
-备份可能包含其他线程的私人元数据。记录保存在 `~/Library/Application Support/Miruun/`，目录权限 0700、文件权限 0600；不自动上传、清理或回滚。选中 rollout 上限 64 MiB，配置上限 1 MiB；共享数据库使用只读源连接和 SQLite backup API，包含已提交 WAL 数据，新建快照可独立只读打开。
-
-明确在恢复前停止时，会保存停止回执并解除临时操作标记，下一次操作仍需新预检和确认。超时、意外回合、断连或回执失败等不确定结果保留备份并只读锁定；不自动重试、回滚或另建线程。强制退出后，未决标记继续有效。“仅只读复核”只报告存储元数据，不执行恢复，也不解除未决状态。
-
-## 项目结构与验证
+## 项目结构
 
 | 路径 | 职责 |
 | --- | --- |
-| `Sources/Miruun` | 菜单栏、确认面板、引擎子进程与持久未决标记 |
-| `Sources/MiruunEngine` | 有界单次请求 / JSONL 结果入口 |
-| `Sources/BridgeCore` | UI 与引擎间的信封、身份确认和操作状态门 |
-| `Sources/BridgeEngine` | 发现、配置目录、预检、RPC、备份、事务与回执 |
-| `Sources/CSQLite` | 系统 SQLite3 模块映射 |
-| `Tests` | 合成存储、状态机、事务、跨层与子进程测试 |
+| `Sources/Miruun` | 菜单栏、设置、后台调度、系统登录项 |
+| `Sources/BridgeEngine/ContinuityGuard.swift` | 配置判定、稳定采样、备份及原子调整 |
+| `Sources/BridgeEngine/ProviderCatalog.swift` | 复用保守的 TOML 解析与配置校验 |
+| `Sources/MiruunEngine`、其余 BridgeEngine / BridgeCore / CSQLite | 初始化时保留的单次修复引擎与协议；当前 GUI 不调用，不是后台批量迁移入口 |
+| `Tests` | 隔离临时目录中的合成配置、存储、协议与状态测试 |
 
-[产品说明](docs/product.md)保留用户提供的需求与历史交付背景；[代码分析](docs/analysis.md)说明迁移依据和修复；当前验收事实以 [VALIDATION.md](VALIDATION.md) 为准。
+应用使用 Swift、AppKit、Foundation、CryptoKit、ServiceManagement 和系统 SQLite3，没有第三方 Swift 包或 Python 运行依赖。旧单对话 UI 已被后台守护替代，旧 helper 不具备原 GUI 的持久未决保护，不应自行调用它执行真实切换。历史备份与未决记录不会自动删除。
 
-图标母版未包含在本次源目录中，菜单栏暂用系统单色符号。应用尚未完成 Developer ID 签名、公证、真实对话验收或洁净机器验收。
+[产品说明](docs/product.md)记录当前范围；[代码分析](docs/analysis.md)记录初始化与新方向的依据。图标母版尚未提供，菜单栏使用系统符号；Developer ID 签名、公证和洁净机器验收尚未完成。

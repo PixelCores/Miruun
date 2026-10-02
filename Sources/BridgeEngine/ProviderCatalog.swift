@@ -396,11 +396,11 @@ private func isHex(_ byte: UInt8) -> Bool {
     (48...57).contains(byte) || (65...70).contains(byte) || (97...102).contains(byte)
 }
 
-private enum CatalogValue {
-    case string(String), other, table(CatalogTable)
+enum CatalogValue {
+    case string(String), bool(Bool), other, table(CatalogTable)
 }
 
-private final class CatalogTable {
+final class CatalogTable {
     var entries: [String: CatalogValue] = [:]
     var explicitlyDefined = false
     var sealed = false
@@ -410,7 +410,7 @@ private final class CatalogTable {
 /// keys, one-line strings, numbers, booleans, arrays, and inline tables. Rejects
 /// multiline syntax, array tables, dotted assignment keys, and date/time values.
 /// All lines are lexed, including ignored fields; strings cannot create tables.
-private enum CatalogTOML {
+enum CatalogTOML {
     static func parse(_ text: String) throws -> CatalogTable {
         let root = CatalogTable()
         root.explicitlyDefined = true
@@ -460,7 +460,7 @@ private enum CatalogTOML {
     }
 }
 
-private struct CatalogLine {
+struct CatalogLine {
     let bytes: [UInt8]
     var index = 0
     var finished: Bool { index >= bytes.count }
@@ -547,6 +547,8 @@ private struct CatalogLine {
         while let byte = peek, ![UInt8(9), 32, 35, 44, 93, 125].contains(byte) { index += 1 }
         let token = String(decoding: bytes[start..<index], as: UTF8.self)
         guard validScalar(token) else { throw ProviderCatalogError.invalidTOML }
+        if token == "true" { return .bool(true) }
+        if token == "false" { return .bool(false) }
         return .other
     }
 

@@ -1,8 +1,76 @@
-# ContextBridgeSwift 分析与 Miruun 初始化
+# Miruun 配置守护与初始化分析
+
+日期：2026 年 10 月 2 日。分析对象为 `/Users/pixelkernel/Downloads/ContextBridgeSwift` 的本地交付，以及与当前接入问题相关的公开版本化源码。修改落在 Miruun，原下载目录保持原样。当前构建与测试事实见 [VALIDATION.md](../VALIDATION.md)。
+
+## 当前方向：一次启用，覆盖原生 openai 本地历史
+
+最新需求是后台运行，在切换接入后让原来的所有对话继续保有上下文，不再让用户逐个选择线程。Miruun 0.4.0 因此把主界面收敛为数据目录、一次启用、状态、暂停和可选登录启动，后台每两秒串行检查配置。
+
+当前最小实现是维护 `CODEX_HOME/config.toml` 的原生 `openai` 标识与入口，覆盖这个目录中以 `openai` 创建的本地历史。不会读取或批量改写 sessions/SQLite，不恢复线程，不启动 Codex 后端，不发用户回合。它只读 `auth.json` 以判断受支持的认证形态，不改变或持久记录凭据。
+
+这一范围与产品目标之间还有明确边界：其他 provider ID 的旧历史不会自动变成 `openai`；其他数据目录、云端资产与任意跨供应商上下文兼容也不在本次实现中。保留入口配置不是活动 GUI 已热切换、上游账户已更换或所有原对话已成功续聊的运行证明。
+
+## 为什么保留 openai 标识
+
+本次核对了 Codex 的精确标签 `rust-v0.159.2`，没有以当前 main 或通用文档替代具体机制。
+
+| 版本化源码证据 | 对方案的影响 |
+| --- | --- |
+| 恢复旧线程时，没有显式模型覆盖就从持久 metadata 取回模型和 provider ID：[thread_processor.rs L230–240](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/app-server/src/request_processors/thread_processor.rs#L230-L240)、[恢复配置 L3923–3955](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/app-server/src/request_processors/thread_processor.rs#L3923-L3955) | 全局换成一个新 provider ID，不足以使原生 `openai` 旧线程跟随 |
+| `ThreadSettingsSnapshot` 保存模型、provider ID、cwd 与权限等，不保存完整 endpoint/auth：[protocol.rs L2210–2238](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/protocol/src/protocol.rs#L2210-L2238) | 同一个 provider ID 可在新配置加载时解析到当前定义，通常无需逐条改写历史 |
+| 当前配置先以 `openai_base_url` 构建 builtin providers，再按 ID 查找定义：[config/mod.rs L3799–3822](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/core/src/config/mod.rs#L3799-L3822) | 通过顶层 `openai_base_url` 维护原生 `openai` 接入；保留完整 URL 路径 |
+| `openai` 是保留 ID，普通 configured provider 合并不会覆盖已存在 builtin：[保留 ID](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/config/src/config_toml.rs#L66-L72)、[合并 L690–721](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/model-provider-info/src/lib.rs#L690-L721) | 不写 `[model_providers.openai]` 来假装覆盖 builtin |
+| builtin OpenAI 使用 Responses，要求 OpenAI auth，并有自己的 WebSocket/能力设置：[provider 定义 L519–557](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/model-provider-info/src/lib.rs#L519-L557) | 限制目标为明确可用全局 API Key 的本机 Responses 接入；复制地址不能宣称完整保留任意自定义 provider 语义 |
+
+[官方高级配置文档](https://developers.openai.com/codex/config-advanced/)也列出顶层 `openai_base_url` 的代理用途，并明确 builtin provider ID 不能覆盖。项目本地配置对 provider/auth 等敏感键有限制；这里不能把项目配置简单描述为另一条可自由改路由的来源。CLI、桌面 host 和受管理配置的实际覆盖则仍可能超出根文件检查范围。
+
+Codex 0.159.2 的 `thread/list` 默认还会按当前 provider 筛选，而空的 `modelProviders` 包含所有 provider：[thread_processor.rs L5481–5490](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/app-server/src/request_processors/thread_processor.rs#L5481-L5490)。保留原生 `openai` ID 也避免靠新增 ID 来切断原生历史列表的配置一致性。Miruun 的守护不调用这个接口，也不查询历史来计算覆盖数量。
+
+## 当前后台调用链与写入边界
+
+```mermaid
+flowchart LR
+    UI[菜单栏：一次启用与状态] -->|串行定期检查| Guard[ContinuityGuard]
+    Guard -->|只读稳定性与形态检查| Auth[auth.json]
+    Guard -->|备份后维护根键| Config[config.toml]
+    Config -->|GUI 重载时采用| Codex[用户的原 Codex GUI]
+```
+
+守护读取当前用户拥有的普通文件，拒绝路径链接、硬链接、异常所有权、超限内容和无法安全解析的 TOML。它要求连续两次 `config.toml` 与 `auth.json` 内容相同，保存前再次核对两者，先保存私有配置备份，再以临时文件、原子替换与目录同步完成配置写入。配置备份可能包含私人配置，只保存 config，不保存 auth。
+
+支持的自定义 provider 必须包含完整 `base_url` 与显式 `requires_openai_auth = true`，`wire_api` 省略或为 `responses`。地址仅允许明确的 loopback HTTP/HTTPS，保留端口与路径；自定义认证、请求头、查询参数和其他额外 provider 字段会阻止转换，避免复制 URL 时遗失路由与认证条件。profiles、已知登录覆盖和非 file 凭据存储也会停止处理。
+
+认证模式的正确持久值是 `"apikey"`，不是 `"api_key"`。显式认证模式优先于 API Key 是否存在：[auth manager L1763–1779](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/login/src/auth/manager.rs#L1763-L1779)。默认文件认证可做静态检查；显式 auto/keyring/ephemeral 不可从 auth.json 推断当前认证。外部或临时认证、环境与 host 覆盖仍是未由本次守护证实的运行边界。
+
+本工具写入的根 `openai_base_url` 行以注释 `# miruun-managed-openai-base-url` 标记。纯 OAuth、当前 provider 为 `openai`、地址仍为 loopback 且标记准确时，守护经过同样的稳定采样、备份与最终比较，只删除这条根地址行，不改变模型、provider 或 auth。未标记的地址、地址已被改成其他目标或 OAuth 配合 custom provider 时停止，不自动恢复旧配置。
+
+原子 rename 不能让不合作的其他写入者参与锁定；最终比较之后仍有外部写入的窗口。备份与稳定采样减少已观察冲突，不能证明跨程序写入互斥。暂停和退出会等待当前检查结束，以免流程被界面动作中断。
+
+主 GUI 已不调用早期 helper/原生恢复流程。原 `MiruunEngine`、备份、事务与测试保留为研究代码；旧单线程 UI、`BridgeRunner`、`ConfirmationSheet` 与 UI 私有未决状态已移除。旧 helper 独立入口仍没有原 UI 的持久未决保护，不能把它当作当前产品的操作入口。
+
+## 活动会话、代理与跨账号连续性
+
+Codex 的 `ModelClient` 是 session-scoped，构造参数应在会话生命期内保持稳定：[client.rs L470–518](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/core/src/client.rs#L470-L518)。app-server 配置管理也明确说明已有线程保留 session route：[config_manager.rs L261–268](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/app-server/src/config_manager.rs#L261-L268)。认证管理还有缓存与显式 reload 路径。因此根文件已更新不能独立证明活动 GUI 下一回合已采用新 endpoint 或 auth；首次配置维护后需要 GUI 重载的运行验收。
+
+固定本机代理地址、在代理侧调整已授权的上游，是减少客户端变更的自然方向。但本次也核对了 CLIProxyAPI 的精确标签 `v7.3.16`，其公开源码显示实际连接连续性仍有条件：
+
+| 代理机制 | 可以得出的结论 |
+| --- | --- |
+| 原生 WebSocket passthrough 要求 pinned auth 与当前 upstream auth ID 相同；带 `previous_response_id` 或 append 依赖当前 upstream：[websocket.go L869–877](https://github.com/router-for-me/CLIProxyAPI/blob/v7.3.16/sdk/api/handlers/openai/openai_responses_websocket.go#L869-L877) | 增量续接依赖连接及认证关联，稳定入口本身不能取消这个条件 |
+| 对依赖旧连接的请求，凭据不能在原连接中轮换；相关失败会让客户端新连接完整重放：[websocket.go L737–744](https://github.com/router-for-me/CLIProxyAPI/blob/v7.3.16/sdk/api/handlers/openai/openai_responses_websocket.go#L737-L744)；完整 `response.create` 可以建立新 transport：[L502–514](https://github.com/router-for-me/CLIProxyAPI/blob/v7.3.16/sdk/api/handlers/openai/openai_responses_websocket.go#L502-L514) | 账号变化可能需要重连及完整历史重发，尚未验证本机 GUI 是否在各类场景中正确完成 |
+| upstream 连接匹配包含 auth ID、WebSocket URL 与 proxy URL；目标不同会分离旧连接：[session.go L377–434](https://github.com/router-for-me/CLIProxyAPI/blob/v7.3.16/internal/runtime/executor/codex_websockets_session.go#L377-L434)、[重新连接 L594–619](https://github.com/router-for-me/CLIProxyAPI/blob/v7.3.16/internal/runtime/executor/codex_websockets_session.go#L594-L619) | 换账号并不只是相同 URL 下无状态地继续用旧连接 |
+| GPT reasoning 的签名校验明确只检查 Fernet-like 外层格式，不证明可解密：[gpt_validation.go L21–24](https://github.com/router-for-me/CLIProxyAPI/blob/v7.3.16/internal/signature/gpt_validation.go#L21-L24) | 既不能据此承诺跨账号 reasoning 可重放，也不能据此断言所有 reasoning 都按账号加密且必然失败 |
+| reasoning replay cache 只对 Claude 输入转换启用：[reasoning.go L52–72](https://github.com/router-for-me/CLIProxyAPI/blob/v7.3.16/internal/runtime/executor/codex_executor_reasoning.go#L52-L72) | 不把该缓存当作原生 Codex Responses 的通用上下文迁移机制 |
+
+目前没有向真实代理发送请求，没有验证账户 B、计费归属、压缩历史重放、工具状态或所有原对话的实际回复。代理源码的恢复设计提供机制依据，不能代替这些运行事实。后续验收应保持多个原生原对话，分别检查冷重载、固定入口的上游变更、活动 WebSocket 重连、压缩与工具调用，并核对实际请求路径。
+
+## 历史：0.3.1 单线程初始化分析
+
+以下保留初始交付审查与修复记录。其 UI 选择、逐线程确认、helper 和真实线程验收计划属于已经被后台守护替代的旧产品流程；原生引擎修复和测试仍是保留源码的历史证据。当前支持范围、隐私说明和后续验收以前文及 0.4.0 产品说明为准。
 
 日期：2026 年 10 月 2 日。分析对象为 `/Users/pixelkernel/Downloads/ContextBridgeSwift` 的本地交付，修改落在 Miruun，原下载目录保持原样。当前构建证据见 [VALIDATION.md](../VALIDATION.md)。
 
-## 结构判断
+### 结构判断
 
 原交付是 Context Bridge 0.3.0：15 个 Swift 实现文件、5 个测试文件、64 个 XCTest 方法，采用 SwiftPM，面向 macOS 13+。产品说明的 Miruun 0.3.1 名称、图标母版和文档中引用的 `check-source.py` 未完整反映在交付目录中。
 
@@ -17,7 +85,7 @@ flowchart LR
     Engine --> Records[私有回执与 SQLite 快照]
 ```
 
-## 核心调用链
+### 核心调用链
 
 `MenuAppDelegate` 负责选择与单次确认；`OperationGate` 阻止忙碌状态下重复操作，`PrivateState.begin` 在启动变更 helper 前持久保存未决标记。`BridgeRunner` 固定调用同包 helper，校验请求关联、输出大小与单一最终结果，主队列更新界面。
 
@@ -29,7 +97,7 @@ flowchart LR
 
 `NativeTransaction.perform` 先在变更进程中以目标 provider 和原模型调用 `thread/resume`，要求原 ID 和有效设置一致，正常关闭后，再通过新进程、不传 provider/model 覆盖地恢复并核对。不会调用 `turn/start`、fork、设置更新或认证写操作。
 
-## 确认并修复的问题
+### 确认并修复的问题
 
 | 问题与触发条件 | 初始化中的处理 | 验证 |
 | --- | --- | --- |
@@ -42,7 +110,7 @@ flowchart LR
 | 成功结果与界面旧 provider 同时显示 | 同步更新所选行和身份说明 | 编译；实际交互仍待 GUI 验收 |
 | 小屏初始尺寸与固定最小 frame 尺寸冲突 | 以屏幕可用 content 尺寸决定初始及最小窗口尺寸 | 编译；小屏和确认面板仍待视觉验收 |
 
-## 协议证据与限制
+### 协议证据与限制
 
 [OpenAI 官方 app-server 文档](https://developers.openai.com/codex/app-server/)明确区分 resume、fork 和只读 read；resume 保留既有线程。通用文档不能替代具体版本的持久化证明。
 
@@ -54,7 +122,7 @@ flowchart LR
 
 复核和冷恢复的成功不能证明 GUI 路由、最终上游账户、计费归属、实际回复或跨供应商压缩上下文兼容性。进程检测基于进程列表和已知名称，有并发启动及未知客户端的边界；全过程仍需用户保持客户端关闭。
 
-## 分析覆盖与后续验收
+### 分析覆盖与后续验收
 
 直接阅读了全部原始实现、测试、构建脚本和 plist；分别沿 UI/JSONL 和引擎/存储/RPC 链核对状态与错误路径，执行本机合成测试，并为原先缺少的跨层、实际子进程和 schema 探测补充测试。没有读取真实私人会话、凭据或数据库，没有进行真实线程切换。
 

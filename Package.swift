@@ -13,7 +13,7 @@ let package = Package(
         .systemLibrary(name: "CSQLite"),
         .target(name: "BridgeEngine", dependencies: ["BridgeCore", "CSQLite"]),
         .executableTarget(name: "MiruunEngine", dependencies: ["BridgeEngine"]),
-        .executableTarget(name: "Miruun", dependencies: ["BridgeCore"]),
+        .executableTarget(name: "Miruun", dependencies: ["BridgeEngine"]),
         .testTarget(name: "BridgeCoreTests", dependencies: ["BridgeCore"]),
         .testTarget(name: "BridgeEngineTests", dependencies: ["BridgeEngine", "CSQLite"])
     ]
