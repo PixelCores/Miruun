@@ -1,0 +1,28 @@
+name: macOS
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test and build application
+        run: bash scripts/build-app.sh --no-reveal
+      - name: Archive application preserving executable permissions
+        run: |
+          app_path=(dist/*/Miruun.app)
+          /usr/bin/ditto -c -k --keepParent "${app_path[0]}" dist/Miruun.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Miruun-macos-unsigned
+          path: dist/Miruun.zip
+          if-no-files-found: error
