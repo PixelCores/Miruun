@@ -4,9 +4,9 @@
 
 ## 当前方向：一次启用，覆盖原生 openai 本地历史
 
-最新需求是后台运行，在切换接入后让原来的所有对话继续保有上下文，不再让用户逐个选择线程。Miruun 0.4.0 因此把主界面收敛为数据目录、一次启用、状态、暂停和可选登录启动，后台每两秒串行检查配置。
+最新需求是后台运行，在切换接入后让原来的所有对话继续保有上下文，不再让用户逐个选择线程。Miruun 因此把主界面收敛为数据目录、一次启用、状态、暂停和可选登录启动，后台每两秒串行检查配置。
 
-当前最小实现是维护 `CODEX_HOME/config.toml` 的原生 `openai` 标识与入口，覆盖这个目录中以 `openai` 创建的本地历史。不会读取或批量改写 sessions/SQLite，不恢复线程，不启动 Codex 后端，不发用户回合。它只读 `auth.json` 以判断受支持的认证形态，不改变或持久记录凭据。
+当前最小实现是维护 `CODEX_HOME/config.toml` 的原生 `openai` 标识与入口，覆盖这个目录中以 `openai` 创建的本地历史。不会读取或批量改写 sessions/SQLite，不恢复线程，不启动 Codex 后端，不发用户回合。当前还支持 CC Switch 在 provider 中配置 `experimental_bearer_token` 的形态：复用这份本机代理 Key，在备份后为内置入口写入 Codex API Key 文件认证。所有变更均等待客户端与后端退出，Key 不进入状态或日志。
 
 这一范围与产品目标之间还有明确边界：其他 provider ID 的旧历史不会自动变成 `openai`；其他数据目录、云端资产与任意跨供应商上下文兼容也不在本次实现中。保留入口配置不是活动 GUI 已热切换、上游账户已更换或所有原对话已成功续聊的运行证明。
 
@@ -20,31 +20,41 @@
 | `ThreadSettingsSnapshot` 保存模型、provider ID、cwd 与权限等，不保存完整 endpoint/auth：[protocol.rs L2210–2238](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/protocol/src/protocol.rs#L2210-L2238) | 同一个 provider ID 可在新配置加载时解析到当前定义，通常无需逐条改写历史 |
 | 当前配置先以 `openai_base_url` 构建 builtin providers，再按 ID 查找定义：[config/mod.rs L3799–3822](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/core/src/config/mod.rs#L3799-L3822) | 通过顶层 `openai_base_url` 维护原生 `openai` 接入；保留完整 URL 路径 |
 | `openai` 是保留 ID，普通 configured provider 合并不会覆盖已存在 builtin：[保留 ID](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/config/src/config_toml.rs#L66-L72)、[合并 L690–721](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/model-provider-info/src/lib.rs#L690-L721) | 不写 `[model_providers.openai]` 来假装覆盖 builtin |
-| builtin OpenAI 使用 Responses，要求 OpenAI auth，并有自己的 WebSocket/能力设置：[provider 定义 L519–557](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/model-provider-info/src/lib.rs#L519-L557) | 限制目标为明确可用全局 API Key 的本机 Responses 接入；复制地址不能宣称完整保留任意自定义 provider 语义 |
+| builtin OpenAI 使用 Responses，要求 OpenAI auth，并有自己的 WebSocket/能力设置：[provider 定义 L519–557](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/model-provider-info/src/lib.rs#L519-L557) | 目标为本机 Responses 接入；全局 API Key 或明确的 inline bearer 可接入，其他自定义 provider 语义不能只复制地址 |
 
 [官方高级配置文档](https://developers.openai.com/codex/config-advanced/)也列出顶层 `openai_base_url` 的代理用途，并明确 builtin provider ID 不能覆盖。项目本地配置对 provider/auth 等敏感键有限制；这里不能把项目配置简单描述为另一条可自由改路由的来源。CLI、桌面 host 和受管理配置的实际覆盖则仍可能超出根文件检查范围。
 
 Codex 0.159.2 的 `thread/list` 默认还会按当前 provider 筛选，而空的 `modelProviders` 包含所有 provider：[thread_processor.rs L5481–5490](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/app-server/src/request_processors/thread_processor.rs#L5481-L5490)。保留原生 `openai` ID 也避免靠新增 ID 来切断原生历史列表的配置一致性。Miruun 的守护不调用这个接口，也不查询历史来计算覆盖数量。
+
+## 0.4.1 修正的实际兼容缺口
+
+本机只读核对确认，CC Switch 的当前 provider 使用 `requires_openai_auth = false` 和 `experimental_bearer_token`，地址为本机 CLIProxyAPI；`auth.json` 原本不存在。这是 provider 自行提供认证的有效形态，不能把文件缺失判断成权限异常或用户未配置代理 Key。0.4.0 的纯文件认证假设使守护提前停止，旧 openai 历史仍会尝试官方入口。
+
+用户明确接受切换成代理 API Key 模式后，方案补上了认证接入：保留所有原生 openai 历史的标识，复用当前 provider 的代理 Key，同时维护全局认证与本机地址。不会创建上游账户、生成新的 Key，或把 provider 的凭据丢弃后只复制 URL。
+
+实际桌面应用为 `/Applications/ChatGPT.app`（bundle `com.openai.codex`）。在隔离 HOME/CODEX_HOME/XDG 中确认其内嵌后端为 `codex-cli 0.159.2`，并使用两个 localhost mock 端口、合成 Key 和历史完成冷恢复：同一线程保留 ID、模型和 provider，第二个入口收到预期 Bearer、第一轮输入与回复以及第二轮输入。该验证限制后端不能访问真实用户文件和其他网络，使用 HTTP SSE；它不等于真实 GUI/账号 B 验收，详见验证记录。
+
+手动启动窗口也有实际缺陷：0.4.0 记住首次显示设置后，后续启动静默且没有处理 reopen。0.4.1 对手动启动和 reopen 显示设置窗口；系统登录启动事件单独处理，登录静默仍需实机验收。
 
 ## 当前后台调用链与写入边界
 
 ```mermaid
 flowchart LR
     UI[菜单栏：一次启用与状态] -->|串行定期检查| Guard[ContinuityGuard]
-    Guard -->|只读稳定性与形态检查| Auth[auth.json]
+    Guard -->|检查并接入既有代理 Key| Auth[auth.json]
     Guard -->|备份后维护根键| Config[config.toml]
     Config -->|GUI 重载时采用| Codex[用户的原 Codex GUI]
 ```
 
-守护读取当前用户拥有的普通文件，拒绝路径链接、硬链接、异常所有权、超限内容和无法安全解析的 TOML。它要求连续两次 `config.toml` 与 `auth.json` 内容相同，保存前再次核对两者，先保存私有配置备份，再以临时文件、原子替换与目录同步完成配置写入。配置备份可能包含私人配置，只保存 config，不保存 auth。
+守护读取当前用户拥有的普通文件，拒绝路径链接、硬链接、异常所有权、超限内容和无法安全解析的 TOML。它要求连续两次 `config.toml` 与 `auth.json` 内容相同，保存前再次核对两者，先保存私有配置备份，再以临时文件、原子替换与目录同步完成配置写入。接管时还备份原 auth，或记录 auth 原来不存在；配置与认证备份均含敏感信息，只留在本机私有目录。两文件按认证先、配置后的顺序分别提交，避免先切换入口却仍保留旧 OAuth 或缺失认证；每个数据目录的 pending 标记与阶段回执记录半提交，异常和崩溃重开不会自动重试或回滚。
 
-支持的自定义 provider 必须包含完整 `base_url` 与显式 `requires_openai_auth = true`，`wire_api` 省略或为 `responses`。地址仅允许明确的 loopback HTTP/HTTPS，保留端口与路径；自定义认证、请求头、查询参数和其他额外 provider 字段会阻止转换，避免复制 URL 时遗失路由与认证条件。profiles、已知登录覆盖和非 file 凭据存储也会停止处理。
+支持的自定义 provider 必须包含完整 `base_url`，`wire_api` 省略或为 `responses`。认证可使用显式 `requires_openai_auth = true` 配合现有 API Key 文件，或 false 配合 `experimental_bearer_token`；后者可在 auth 文件缺失时接管，也可备份后将原文件 OAuth 认证切换为 API Key。地址仅允许明确的 loopback HTTP/HTTPS，保留端口与路径；自定义认证、请求头、查询参数和其他额外 provider 字段会阻止转换，避免复制 URL 时遗失路由与认证条件。profiles、已知登录覆盖和非 file 凭据存储也会停止处理。
 
 认证模式的正确持久值是 `"apikey"`，不是 `"api_key"`。显式认证模式优先于 API Key 是否存在：[auth manager L1763–1779](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/login/src/auth/manager.rs#L1763-L1779)。默认文件认证可做静态检查；显式 auto/keyring/ephemeral 不可从 auth.json 推断当前认证。外部或临时认证、环境与 host 覆盖仍是未由本次守护证实的运行边界。
 
 本工具写入的根 `openai_base_url` 行以注释 `# miruun-managed-openai-base-url` 标记。纯 OAuth、当前 provider 为 `openai`、地址仍为 loopback 且标记准确时，守护经过同样的稳定采样、备份与最终比较，只删除这条根地址行，不改变模型、provider 或 auth。未标记的地址、地址已被改成其他目标或 OAuth 配合 custom provider 时停止，不自动恢复旧配置。
 
-原子 rename 不能让不合作的其他写入者参与锁定；最终比较之后仍有外部写入的窗口。备份与稳定采样减少已观察冲突，不能证明跨程序写入互斥。暂停和退出会等待当前检查结束，以免流程被界面动作中断。
+写入前及提交前均检查 Codex 客户端/后端已退出。原子 rename 不能让不合作的其他写入者参与锁定；最终比较之后仍有外部写入的窗口。备份与稳定采样减少已观察冲突，不能证明跨程序写入互斥。暂停和退出会等待当前检查结束，以免流程被界面动作中断。
 
 主 GUI 已不调用早期 helper/原生恢复流程。原 `MiruunEngine`、备份、事务与测试保留为研究代码；旧单线程 UI、`BridgeRunner`、`ConfirmationSheet` 与 UI 私有未决状态已移除。旧 helper 独立入口仍没有原 UI 的持久未决保护，不能把它当作当前产品的操作入口。
 
@@ -62,11 +72,11 @@ Codex 的 `ModelClient` 是 session-scoped，构造参数应在会话生命期�
 | GPT reasoning 的签名校验明确只检查 Fernet-like 外层格式，不证明可解密：[gpt_validation.go L21–24](https://github.com/router-for-me/CLIProxyAPI/blob/v7.3.16/internal/signature/gpt_validation.go#L21-L24) | 既不能据此承诺跨账号 reasoning 可重放，也不能据此断言所有 reasoning 都按账号加密且必然失败 |
 | reasoning replay cache 只对 Claude 输入转换启用：[reasoning.go L52–72](https://github.com/router-for-me/CLIProxyAPI/blob/v7.3.16/internal/runtime/executor/codex_executor_reasoning.go#L52-L72) | 不把该缓存当作原生 Codex Responses 的通用上下文迁移机制 |
 
-目前没有向真实代理发送请求，没有验证账户 B、计费归属、压缩历史重放、工具状态或所有原对话的实际回复。代理源码的恢复设计提供机制依据，不能代替这些运行事实。后续验收应保持多个原生原对话，分别检查冷重载、固定入口的上游变更、活动 WebSocket 重连、压缩与工具调用，并核对实际请求路径。
+本机代理的只读 `/v1/models` 检查返回 HTTP 200，26 个模型中包含当前配置模型；未发送真实对话请求，也没有验证账户 B、计费归属、压缩历史重放、工具状态或所有原对话的实际回复。代理源码的恢复设计和隔离后端的合成冷恢复提供机制依据，不能代替这些运行事实。后续验收应保持多个原生原对话，分别检查冷重载、固定入口的上游变更、活动 WebSocket 重连、压缩与工具调用，并核对实际请求路径。
 
 ## 历史：0.3.1 单线程初始化分析
 
-以下保留初始交付审查与修复记录。其 UI 选择、逐线程确认、helper 和真实线程验收计划属于已经被后台守护替代的旧产品流程；原生引擎修复和测试仍是保留源码的历史证据。当前支持范围、隐私说明和后续验收以前文及 0.4.0 产品说明为准。
+以下保留初始交付审查与修复记录。其 UI 选择、逐线程确认、helper 和真实线程验收计划属于已经被后台守护替代的旧产品流程；原生引擎修复和测试仍是保留源码的历史证据。当前支持范围、隐私说明和后续验收以前文及 0.4.1 产品说明为准。
 
 日期：2026 年 10 月 2 日。分析对象为 `/Users/pixelkernel/Downloads/ContextBridgeSwift` 的本地交付，修改落在 Miruun，原下载目录保持原样。当前构建证据见 [VALIDATION.md](../VALIDATION.md)。
 

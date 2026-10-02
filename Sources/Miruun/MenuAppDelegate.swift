@@ -41,16 +41,26 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         refreshLoginState()
         if preferences.bool(forKey: "continuityEnabled") { start() }
         else { showStatus("守护已暂停 · 现有配置保持原样", symbol: "pause.circle") }
-        if !preferences.bool(forKey: "continuityOnboardingShown") {
-            preferences.set(true, forKey: "continuityOnboardingShown")
-            showWindow()
-        }
+        // Manual launches must remain discoverable even after the first run.
+        // Only a system login launch should start without a settings window.
+        let launchEvent = NSAppleEventManager.shared().currentAppleEvent
+        let launchedAtLogin = launchEvent?.eventID == kAEOpenApplication
+            && launchEvent?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
+        if !launchedAtLogin { showWindow() }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if window != nil { showWindow() }
+        return true
     }
 
     private func makeMenu() {
         let mainMenu = NSMenu()
         let applicationItem = mainMenu.addItem(withTitle: "Miruun", action: nil, keyEquivalent: "")
         let applicationMenu = NSMenu(title: "Miruun")
+        let settingsItem = applicationMenu.addItem(withTitle: "设置与状态…", action: #selector(showWindow), keyEquivalent: ",")
+        settingsItem.target = self
+        applicationMenu.addItem(.separator())
         let quitItem = applicationMenu.addItem(withTitle: "退出 Miruun", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         applicationItem.submenu = applicationMenu
@@ -97,7 +107,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         title.font = .systemFont(ofSize: 23, weight: .semibold)
         root.addArrangedSubview(title)
         addText("一次启用，后台维护 Codex 的本地代理配置。适用于同一数据目录中由官方 openai 创建的全部对话，无须逐条选择。", to: root)
-        addText("先在 CC Switch 配好 CLIProxyAPI 和代理 API key。Miruun 会读取认证类型、备份并调整连接配置；对话历史与登录凭据保持原样。", to: root)
+        addText("Miruun 复用 CC Switch 已配置的本机代理 Key，备份配置与认证后，为 Codex 设置 API Key 接入。账号由 CLIProxyAPI 管理，对话历史保持原样。", to: root)
 
         root.addArrangedSubview(NSTextField(labelWithString: "Codex 数据目录"))
         homeField.isEditable = false
@@ -121,7 +131,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         statusLabel.font = .systemFont(ofSize: 12, weight: .medium)
         root.addArrangedSubview(statusLabel)
         statusLabel.widthAnchor.constraint(equalTo: root.widthAnchor, constant: -48).isActive = true
-        addText("切换后等待配置就绪，再重启 Codex。上下文、原模型与代理账号是否兼容，需要在 GUI 中实际续聊核对。关闭此窗口后守护继续运行。", to: root)
+        addText("启用后先退出 Codex，等待 Miruun 提示配置就绪，再打开 Codex 续聊。接管时不改写历史。关闭此窗口后守护继续运行。", to: root)
     }
 
     private func addText(_ text: String, to root: NSStackView) {
@@ -138,6 +148,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showWindow() {
+        if window.isMiniaturized { window.deminiaturize(nil) }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }

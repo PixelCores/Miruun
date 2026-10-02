@@ -1,5 +1,30 @@
 # Miruun 验证记录
 
+## 0.4.1 代理认证接入与启动修复
+
+日期：2026 年 10 月 2 日。以下为当前版本证据；后面的 0.4.0、0.3.1 为历史记录。
+
+| 验证 | 当前结果 |
+| --- | --- |
+| 全量 XCTest | 106 项通过，0 失败（BridgeEngine 93、BridgeCore 13） |
+| 连续性守护测试 | 27 项通过，全部使用临时合成数据目录与注入的进程状态 |
+| Release 构建与打包 | Miruun / MiruunEngine 成功，日志无 warning 或 error；plist 校验通过 |
+| 独立复核 | 修正两文件提交顺序：先认证，再配置；再次复核确认该问题消除 |
+| 最终 GUI | 0.4.1 设置窗口实际打开，顶部布局正常，保留用户已启用的守护；实际配置被识别，显示等待 Codex/ChatGPT 及后端退出 |
+| 手动再次打开 | 已用相同启动修复的先行 0.4.1 包验证：关闭窗口后再次执行 open，设置重新显示；最终包已验证首次显示及退出旧版的 Cmd+Q |
+| 本机代理只读检查 | 当前配置 Key 在内存中用于 localhost:8317 的 GET /v1/models；HTTP 200，26 个模型中包含当前配置模型；没有打印 Key 或发送真实回合 |
+| 实际 Codex 后端隔离验证 | 内嵌 codex-cli 0.159.2 在合成 HOME/CODEX_HOME 中识别 API Key 认证，冷恢复同一线程后向新的 mock 入口携带预期 Bearer 和历史输入、回复 |
+
+新增回归包括：缺失 auth 的等待状态、inline bearer 建立 API Key 文件认证、原 OAuth 字节备份、相同 Key 不重写认证文件、配置或认证变化后重新采样、活动及未知客户端门、提交前冲突、认证提交后的客户端启动与文件冲突、未决记录阻止同实例及重开后的重试，以及不同数据目录互不阻塞。备份目录 0700、文件 0600；状态和阶段回执不包含 Key。认证提交后、配置提交前中断时保留原 custom 配置、已提交认证与 pending，文案明确可能未完整完成。
+
+实际后端验证使用 `/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`。独立 app-server 使用合成凭据、模型和两轮输入；macOS 沙盒只允许两个随机 localhost 端口，并禁止读取或写入 `/Users`。验证先在一个 mock 入口建立内置 openai 对话并保存首轮，再关闭后端、切换入口、无模型/provider 覆盖地恢复同一 ID。第二个入口确认请求包含第一轮输入、mock 回复和第二轮输入。
+
+该验证使用 HTTP SSE，mock 拒绝 WebSocket 后客户端回退；未覆盖真实代理的 WebSocket、账号 B、GUI 登录态、加密 reasoning 或压缩历史。运行结果保存在本机临时目录 `/private/tmp/miruun-codex-contract-9wux3n2q/result.json`，合成复现脚本为 `/private/tmp/miruun-codex-contract.py`；这些临时文件不作为发布依赖。
+
+最终应用：`dist/20261002-215833-23422/Miruun.app`，版本 0.4.1 / build 3。完整构建日志：`/private/tmp/miruun-0.4.1-final-build.log`。构建沿用下方 Xcode 命令。当前 Codex 仍在运行，Miruun 已启用并等待退出，实际 `auth.json` 仍不存在；尚未执行真实两文件接管，也未读取真实会话或数据库。
+
+接下来的真实验收由用户退出当前 Codex 后进行：保持 Miruun 与 CLIProxyAPI 运行，等待配置就绪，再打开多个原生 openai 对话主动续聊，并对照代理日志确认账户 B。配置就绪不代表这些运行结果已经通过。登录项静默启动、Developer ID 签名、公证及其他系统/架构的分发验收仍未完成。
+
 ## 0.4.0 后台连续性守护
 
 日期：2026 年 10 月 2 日。当前 GUI 已替换单线程选择/确认流程，下方 0.3.1 部分仅为初始化历史证据。

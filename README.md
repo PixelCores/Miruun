@@ -8,21 +8,23 @@ Miruun 是原生 macOS 菜单栏小工具，面向这样的工作流：在 Codex
 
 ## 使用
 
-1. 将打包后的 `Miruun.app` 放到固定位置并打开，选择 Codex 实际使用的数据目录，通常为 `~/.codex`。
+1. 将打包后的 `Miruun.app` 放到固定位置并打开，设置窗口会自动显示。选择 Codex 实际使用的数据目录，通常为 `~/.codex`。
 2. 勾选“启用后台连续性守护”。也可选择“登录 Mac 时启动 Miruun”。之后关闭窗口即可，日常状态只显示在菜单栏。
-3. 在 CC Switch 配好 CLIProxyAPI 的本地 Responses 入口与代理 API key，由代理管理账号 B。Miruun 不替你登录，也不写入凭据。
-4. 等待菜单栏提示配置已就绪，再重启 Codex GUI，直接打开任意原生 `openai` 历史继续。
+3. 在 CC Switch 配好 CLIProxyAPI 的本地 Responses 入口与代理 API key，由代理管理账号 B。支持 Key 已保存在 Codex 文件认证中，或由当前 custom provider 的 `experimental_bearer_token` 提供。
+4. 正常退出 Codex GUI 及其他 Codex 后端。Miruun 检测到退出后备份配置与认证，并将已有代理 Key 接入 Codex 的 API Key 模式；等待菜单栏提示配置已就绪，再打开 Codex GUI 和任意原生 `openai` 历史继续。
 5. 首次实际使用时，检查多个原对话的上下文和同次代理请求的上游账号。成功响应或模型名称不能单独证明请求由账号 B 处理。
 
-守护每两秒检查配置和认证文件；两次稳定采样后才调整配置。暂停或退出守护会保留当前配置；需要更换数据目录时先暂停。回到 OAuth 登录时，守护仅移除自己标记的代理入口；遇到未标记的地址覆盖会提示处理，不擅自恢复旧文件。正常检查没有弹窗、通知或网络请求，不会启动 Codex 后端。登录项使用 macOS 13+ 的 `SMAppService`，未经签名构建的系统注册行为仍需实机验收。
+守护每两秒检查配置和认证文件；两次稳定采样后才调整配置。所有配置与认证写入均等待 Codex 客户端及后端退出；暂停或退出守护会保留当前配置；需要更换数据目录时先暂停。回到 OAuth 登录时，守护仅移除自己标记的代理入口；遇到未标记的地址覆盖会提示处理，不擅自恢复旧文件。正常检查没有弹窗、通知或网络请求，不会启动 Codex 后端。登录项使用 macOS 13+ 的 `SMAppService`，未经签名构建的系统注册行为仍需实机验收。
+
+手动双击或执行 `open "/完整路径/Miruun.app"` 都会显示设置窗口；应用已运行时，再次打开也会显示。关闭设置窗口仅隐藏界面，可以从菜单栏“设置与状态…”再次打开。系统登录项启动保持静默。
 
 ## 配置契约
 
 根 `model_provider` 保持为 `openai`，根 `openai_base_url` 指向 CC Switch 当前选中的本地代理。Codex 冷恢复保留历史 provider ID，再从当前配置解析其地址，所以无需逐条迁移历史。所有新建对话也继续使用相同 ID；之后切换账号由代理负责。
 
-当前仅接受明确的本地入口（`localhost`、`127.0.0.1`、`[::1]`），Responses 协议，以及文件中的 API-key 认证。自定义 provider 必须明确使用全局 OpenAI 认证。无法保留的自定义认证、请求头、查询参数、profile、Keychain 和未知配置语法会显示原因并停止调整；不会猜测有效运行配置。已有自定义 provider 历史不会自动改为 `openai`，其 GUI 可见性也不能由本工具保证。
+当前仅接受明确的本地入口（`localhost`、`127.0.0.1`、`[::1]`）与 Responses 协议。支持两种认证：`requires_openai_auth = true` 使用既有文件 API Key；或 `requires_openai_auth = false` 且 `experimental_bearer_token` 明确提供代理 Key，此时先备份原认证，再写为 Codex 的 `apikey` 文件认证。认证文件原来不存在也可接管。其他自定义认证、请求头、查询参数、profile、Keychain 和未知配置语法会显示原因并停止调整；不会猜测有效运行配置。已有自定义 provider 历史不会自动改为 `openai`，其 GUI 可见性也不能由本工具保证。
 
-Miruun 只写所选目录的 `config.toml`，读 `auth.json` 判断认证方式。状态与日志不展示凭据，也不会备份认证文件；配置文件本身可能含敏感字段，因此原配置备份只保存在本机 `~/Library/Application Support/Miruun/ConfigBackups/`（目录 0700、文件 0600）。配置修改采用临时文件、重核对和原子替换；这不能给不合作的外部写入者提供事务锁。请等 CC Switch 完成切换、Miruun 配置就绪后再启动 Codex。
+Miruun 读取所选目录的 `config.toml` 与可选的 `auth.json`。接管 provider 自带的 Key 时会写入 API Key 认证文件；不会创建新 Key、改变上游账号凭据或改写历史。状态与日志不展示 Key。配置和原认证的备份包含敏感信息，只保存在本机 `~/Library/Application Support/Miruun/ConfigBackups/`（目录 0700、文件 0600）。两份文件各自采用临时文件、重核对和原子替换，先提交代理认证，再设置本机地址；这不能让两份文件或其他程序共同参与原子事务。提交异常会保留备份与未决记录，重开 Miruun 也不会自动重试或恢复旧凭据。请等 CC Switch 完成切换、Miruun 配置就绪后再启动 Codex。
 
 [OpenAI 官方高级配置](https://developers.openai.com/codex/config-advanced/)说明 `openai_base_url` 的用途，但它不改变认证。源码核对基于 Codex 0.159.2；GUI 外部认证、管理员策略、启动参数和不同数据目录可能影响实际行为。原模型、Responses/WebSocket 与历史中的加密内容也需要目标代理和账号支持。
 
