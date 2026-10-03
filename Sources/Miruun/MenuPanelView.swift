@@ -12,16 +12,19 @@ final class MenuPanel: NSPanel {
     }
 }
 
-/// Paints the menu surface; the delegate supplies controls and their real state.
+/// The system supplies the glass material; the delegate supplies native controls.
 final class MenuPanelView: NSView {
-    static let contentSize = NSSize(width: 332, height: 379)
+    private weak var materialView: NSVisualEffectView?
 
-    var showsSettings = false { didSet { needsDisplay = true } }
-    var selectedIndex = 1 { didSet { needsDisplay = true } }
-    var arrowX: CGFloat = 166 { didSet { needsDisplay = true } }
-    var active = [false, false, false] { didSet { needsDisplay = true } }
-    var waiting = false { didSet { needsDisplay = true } }
-    var blocked = false { didSet { needsDisplay = true } }
+    static let contentSize = NSSize(width: 332, height: 350)
+
+    var page = 0 { didSet { needsDisplay = true } }
+    var arrowX: CGFloat = 166 {
+        didSet {
+            updateMask()
+            needsDisplay = true
+        }
+    }
 
     override var isFlipped: Bool { true }
     override var isOpaque: Bool { false }
@@ -36,41 +39,70 @@ final class MenuPanelView: NSView {
         setFrameSize(Self.contentSize)
     }
 
+    func installMaterial(_ view: NSVisualEffectView) {
+        view.material = .popover
+        view.blendingMode = .behindWindow
+        view.state = .active
+        view.appearance = NSAppearance(named: .darkAqua)
+        view.wantsLayer = true
+        materialView = view
+        updateMask()
+        needsDisplay = true
+    }
+
+    private func updateMask() {
+        guard let materialView else { return }
+        // Snapshot the path so the retained image does not retain this view.
+        let path = surfacePath()
+        materialView.maskImage = NSImage(size: Self.contentSize, flipped: true) { _ in
+            NSColor.white.setFill()
+            path.fill()
+            return true
+        }
+    }
+
     override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
         NSGraphicsContext.saveGraphicsState()
         defer { NSGraphicsContext.restoreGraphicsState() }
-        NSGraphicsContext.current?.compositingOperation = .copy
-        NSColor.clear.setFill()
-        bounds.fill()
-        NSGraphicsContext.current?.compositingOperation = .sourceOver
 
         let surface = surfacePath()
-        Self.color(0x181818).setFill()
-        surface.fill()
-        Self.color(0x313131).setStroke()
+        surface.addClip()
+        NSColor.white.withAlphaComponent(0.18).setStroke()
         surface.lineWidth = 0.5
         surface.stroke()
+        Self.orbitImage(size: NSSize(width: 32, height: 18))
+            .draw(in: NSRect(x: 17, y: 29, width: 32, height: 18))
 
-        Self.orbitImage(size: NSSize(width: 48, height: 24))
-            .draw(in: NSRect(x: 142, y: 35, width: 48, height: 24))
-        drawNavigation()
-        drawContainer(NSRect(x: 12, y: 148, width: 308, height: 167), radius: 10.5)
-        if !showsSettings { drawRows() }
-        if selectedIndex == 6 {
-            // AppKit checkbox cells do not tint their text on this custom surface.
-            ("登录 Mac 时启动 Miruun" as NSString).draw(
-                at: NSPoint(x: 47, y: 242), withAttributes: [
-                    .font: NSFont.systemFont(ofSize: 11, weight: .medium),
-                    .foregroundColor: Self.color(0xE9E9E9)
-                ])
+        if page == 0 {
+            drawContainer(NSRect(x: 16, y: 75, width: 300, height: 28), radius: 14)
+            drawContainer(NSRect(x: 16, y: 114, width: 300, height: 120), radius: 12)
+            let divider = NSBezierPath()
+            divider.move(to: NSPoint(x: 30, y: 174))
+            divider.line(to: NSPoint(x: 302, y: 174))
+            NSColor.white.withAlphaComponent(0.12).setStroke()
+            divider.lineWidth = 0.5
+            divider.stroke()
+            // The real launch button supplies its blue tint and disabled state.
+            drawContainer(NSRect(x: 16, y: 248, width: 300, height: 38),
+                          radius: 10, fillAlpha: 0.035)
+        } else {
+            drawContainer(NSRect(x: 16, y: 86, width: 300, height: 200), radius: 12)
+            if page == 1 {
+                ("登录 Mac 时启动 Miruun" as NSString).draw(
+                    at: NSPoint(x: 51, y: 203), withAttributes: [
+                        .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+                        .foregroundColor: NSColor.labelColor
+                    ])
+            }
         }
-        drawContainer(NSRect(x: 12, y: 332, width: 150, height: 28), radius: 7)
-        drawContainer(NSRect(x: 170, y: 332, width: 150, height: 28), radius: 7)
-        drawFooter(symbol: selectedIndex == 1 ? "gearshape" : "arrow.left",
-                   title: selectedIndex == 1 ? "设置" : "返回",
-                   in: NSRect(x: 12, y: 332, width: 150, height: 28))
+        drawContainer(NSRect(x: 16, y: 304, width: 144, height: 30), radius: 9)
+        drawContainer(NSRect(x: 172, y: 304, width: 144, height: 30), radius: 9)
+        drawFooter(symbol: page == 0 ? "gearshape" : "arrow.left",
+                   title: page == 0 ? "设置" : "返回",
+                   in: NSRect(x: 16, y: 304, width: 144, height: 30))
         drawFooter(symbol: "power", title: "退出",
-                   in: NSRect(x: 170, y: 332, width: 150, height: 28))
+                   in: NSRect(x: 172, y: 304, width: 144, height: 30))
     }
 
     static func color(_ hex: UInt32) -> NSColor {
@@ -146,14 +178,14 @@ final class MenuPanelView: NSView {
         path.curve(to: NSPoint(x: 331.5, y: 30),
                    controlPoint1: NSPoint(x: 323.2, y: 11.5),
                    controlPoint2: NSPoint(x: 331.5, y: 19.8))
-        path.line(to: NSPoint(x: 331.5, y: 360))
-        path.curve(to: NSPoint(x: 313, y: 378.5),
-                   controlPoint1: NSPoint(x: 331.5, y: 370.2),
-                   controlPoint2: NSPoint(x: 323.2, y: 378.5))
-        path.line(to: NSPoint(x: 19, y: 378.5))
-        path.curve(to: NSPoint(x: 0.5, y: 360),
-                   controlPoint1: NSPoint(x: 8.8, y: 378.5),
-                   controlPoint2: NSPoint(x: 0.5, y: 370.2))
+        path.line(to: NSPoint(x: 331.5, y: 331))
+        path.curve(to: NSPoint(x: 313, y: 349.5),
+                   controlPoint1: NSPoint(x: 331.5, y: 341.2),
+                   controlPoint2: NSPoint(x: 323.2, y: 349.5))
+        path.line(to: NSPoint(x: 19, y: 349.5))
+        path.curve(to: NSPoint(x: 0.5, y: 331),
+                   controlPoint1: NSPoint(x: 8.8, y: 349.5),
+                   controlPoint2: NSPoint(x: 0.5, y: 341.2))
         path.line(to: NSPoint(x: 0.5, y: 30))
         path.curve(to: NSPoint(x: 19, y: 11.5),
                    controlPoint1: NSPoint(x: 0.5, y: 19.8),
@@ -162,75 +194,18 @@ final class MenuPanelView: NSView {
         return path
     }
 
-    private func drawContainer(_ rect: NSRect, radius: CGFloat) {
+    private func drawContainer(_ rect: NSRect, radius: CGFloat, fillAlpha: CGFloat = 0.06) {
         let path = NSBezierPath(roundedRect: rect.insetBy(dx: 0.25, dy: 0.25),
                                 xRadius: radius, yRadius: radius)
-        Self.color(0x292929).setFill()
+        NSColor.white.withAlphaComponent(fillAlpha).setFill()
         path.fill()
-        Self.color(0x414141).setStroke()
+        NSColor.white.withAlphaComponent(0.14).setStroke()
         path.lineWidth = 0.5
         path.stroke()
     }
 
-    private func drawNavigation() {
-        drawContainer(NSRect(x: 12, y: 77, width: 308, height: 38), radius: 12)
-        let centers: [CGFloat] = [34, 71.5, 109, 146.5, 184.5, 222, 260, 298]
-        let symbols = ["moon.zzz.fill", "slider.horizontal.3", "cpu", "globe",
-                       "externaldrive", "bolt.fill", "wrench.and.screwdriver.fill", "switch.2"]
-        for index in centers.indices {
-            let selected = index == selectedIndex
-            if selected {
-                Self.color(0x273A54).setFill()
-                NSBezierPath(roundedRect: NSRect(x: centers[index] - 17.5, y: 81,
-                                                width: 35, height: 30),
-                             xRadius: 8, yRadius: 8).fill()
-            }
-            drawSymbol(symbols[index],
-                       in: NSRect(x: centers[index] - 8, y: 88, width: 16, height: 16),
-                       color: Self.color(selected ? 0x007AFF : 0x8F8F8F))
-        }
-    }
-
-    private func drawRows() {
-        precondition(active.count == 3)
-        let symbols = ["shield.fill", "arrow.up.forward", "power"]
-        let topColors: [UInt32] = [0x7C80FF, 0xFF4870, 0xFFFFFF]
-        let bottomColors: [UInt32] = [0x5554F1, 0xF50039, 0xE3F3FF]
-        for index in active.indices {
-            let offset = CGFloat(index) * 52
-            let iconRect = NSRect(x: 25, y: 166 + offset, width: 26, height: 26)
-            let icon = NSBezierPath(roundedRect: iconRect, xRadius: 6.3, yRadius: 6.3)
-            let gradient = NSGradient(starting: Self.color(topColors[index]),
-                                      ending: Self.color(bottomColors[index]))!
-            gradient.draw(in: icon, angle: 90)
-            drawSymbol(symbols[index], in: iconRect.insetBy(dx: 4, dy: 4),
-                       color: index == 2 ? Self.color(0x007AFF) : .white)
-
-            let orange = index == 1 && (waiting || blocked)
-            let accent = Self.color(orange ? 0xFF9E33 : 0x007AFF)
-            let trackRect = NSRect(x: 64, y: 189 + offset, width: 150, height: 5)
-            Self.color(0x484848).setFill()
-            NSBezierPath(roundedRect: trackRect, xRadius: 2.5, yRadius: 2.5).fill()
-            let center: CGFloat = active[index] ? trackRect.maxX - 12 : trackRect.minX + 12
-            if active[index] {
-                accent.setFill()
-                NSBezierPath(roundedRect: NSRect(x: trackRect.minX, y: trackRect.minY,
-                                                width: center - trackRect.minX, height: 5),
-                             xRadius: 2.5, yRadius: 2.5).fill()
-            }
-            let knob = NSBezierPath(roundedRect: NSRect(x: center - 12, y: 184 + offset,
-                                                       width: 24, height: 15),
-                                    xRadius: 7.5, yRadius: 7.5)
-            Self.color(orange ? 0x876237 : (active[index] ? 0x435D73 : 0x535353)).setFill()
-            knob.fill()
-            Self.color(orange ? 0xAA8050 : (active[index] ? 0x64829A : 0x6B6B6B)).setStroke()
-            knob.lineWidth = 0.5
-            knob.stroke()
-        }
-    }
-
     private func drawFooter(symbol: String, title: String, in rect: NSRect) {
-        let tint = Self.color(0xA5A5A5)
+        let tint = NSColor.labelColor.withAlphaComponent(0.84)
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
             .foregroundColor: tint
