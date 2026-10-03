@@ -32,7 +32,7 @@ public final class ContinuityGuard {
 
     private enum Failure: Error {
         case unsafeFiles, missingAuth, invalidConfig, invalidAuth, unsupportedAuth, overrides
-        case unsupportedProvider, unsafeEndpoint, oauthRoute, conflict, backup, write, clientsActive, clientsUnknown, pending
+        case unsupportedProvider, unsafeEndpoint, oauthRoute, customProvider, conflict, backup, write, clientsActive, clientsUnknown, pending
 
         var message: String {
             switch self {
@@ -45,6 +45,7 @@ public final class ContinuityGuard {
             case .unsupportedProvider: return "目标 provider 的认证或能力设置无法完整保留；守护未修改配置。"
             case .unsafeEndpoint: return "目标必须是明确的本机 loopback HTTP/HTTPS 地址，不能含用户信息、查询或片段。"
             case .oauthRoute: return "ChatGPT/OAuth 登录仍有非 Miruun 管理的地址或 provider 覆盖；请先在 CC Switch 恢复官方入口，再重启 GUI。"
+            case .customProvider: return "Miruun 管理的 custom 历史接入已被修改，无法安全同步；请复核配置，守护未写入。"
             case .conflict: return "配置或登录文件在保存前已变化；保留备份，本次未覆盖。"
             case .backup: return "无法完成私有配置备份；守护未修改配置。"
             case .write: return "配置保存未获完整持久化确认；保留备份，守护不会自动恢复。"
@@ -59,6 +60,7 @@ public final class ContinuityGuard {
     private let backupDirectory: URL
     private let clientsAreRunning: () throws -> Bool
     private static let endpointMarker = "# miruun-managed-openai-base-url"
+    private static let customProviderMarker = "# miruun-managed-custom-provider"
     private var previous: Snapshot?
     private var backupPath: String?
     private var blockedStatus: ContinuityStatus?
@@ -83,25 +85,26 @@ public final class ContinuityGuard {
         do {
             try checkPending()
             let snapshot = try readSnapshot()
-            let (replacement, apiKey) = try plannedSnapshot(snapshot)
+            let (routed, apiKey) = try plannedSnapshot(snapshot)
+            let replacement = Snapshot(config: try repairCustomProvider(routed.config, apiKey: apiKey), auth: routed.auth)
             guard replacement != snapshot else {
                 previous = snapshot
                 return apiKey
                     ? ContinuityStatus(phase: .ready, message: "本机代理配置已就绪，可打开 Codex 核对续聊与账号。")
-                    : ContinuityStatus(phase: .waiting, message: "当前为 ChatGPT/OAuth 登录且无地址覆盖；保持官方入口，不修改凭据。")
+                    : ContinuityStatus(phase: .ready, message: "官方登录配置已就绪，未修改凭据；可打开 Codex 核对历史续聊。")
             }
             try requireClosed()
             guard previous == snapshot else {
                 previous = snapshot
                 return ContinuityStatus(phase: .waiting, message: apiKey
                     ? "检测到接入配置，等待下一次相同采样后保存。"
-                    : "检测到 OAuth 回切，等待下一次相同采样后移除 Miruun 的本机地址覆盖。")
+                    : "检测到官方登录，等待下一次相同采样后修复缺失的 custom 历史接入并清理本机地址覆盖。")
             }
             try save(replacement, expected: snapshot)
             previous = replacement
             return ContinuityStatus(phase: .updated, message: apiKey
                 ? "已备份并完成代理配置与认证接入，可以重新打开 Codex 验证续聊。"
-                : "已备份并移除 Miruun 的本机地址覆盖，未改 provider 或凭据；请停止其他配置写入并重启 GUI，核对 OAuth 登录。", backupPath: backupPath)
+                : "已备份并完成官方登录配置维护，补齐缺失的 custom 历史接入；请停止其他配置写入并重启 GUI 核对续聊。", backupPath: backupPath)
         } catch Failure.missingAuth {
             previous = nil
             return ContinuityStatus(phase: .waiting, message: Failure.missingAuth.message, backupPath: backupPath)
@@ -242,6 +245,90 @@ public final class ContinuityGuard {
         let active: Bool
         do { active = try clientsAreRunning() } catch { throw Failure.clientsUnknown }
         guard !active else { throw Failure.clientsActive }
+    }
+
+    /// Old rollouts retain their provider ID even after CC Switch removes its
+    /// definition. Restore only the known `custom` ID, without touching history.
+    /// An absent base_url uses Codex's auth-dependent official endpoint. Once
+    /// managed, the alias must follow the native route on later proxy switches.
+    private func repairCustomProvider(_ config: Data, apiKey: Bool) throws -> Data {
+        guard let text = String(data: config, encoding: .utf8) else { throw Failure.invalidConfig }
+        let root = try CatalogTOML.parse(text)
+        let definitions: CatalogTable?
+        if let value = root.entries["model_providers"] {
+            guard case let .table(table) = value else { throw Failure.invalidConfig }
+            definitions = table
+        } else { definitions = nil }
+        let custom = definitions?.entries["custom"]
+        let marked = text.contains(Self.customProviderMarker)
+        // An existing user/provider-tool definition remains authoritative.
+        if let custom, !marked {
+            guard case .table = custom else { throw Failure.invalidConfig }
+            return config
+        }
+        if custom == nil, apiKey, !marked { return config }
+
+        let endpoint: String?
+        if apiKey {
+            guard case let .string(value)? = root.entries["openai_base_url"] else { throw Failure.unsafeEndpoint }
+            try requireLoopback(value)
+            endpoint = value
+        } else { endpoint = nil }
+        let newline = text.contains("\r\n") ? "\r\n" : "\n"
+        let desired = try customProviderBlock(endpoint: endpoint, newline: newline)
+        let output: String
+        if let custom {
+            guard case let .table(definition) = custom,
+                  Set(definition.entries.keys).isSubset(of: ["name", "wire_api", "requires_openai_auth", "base_url"]),
+                  case .string("OpenAI")? = definition.entries["name"],
+                  case .string("responses")? = definition.entries["wire_api"],
+                  case .bool(true)? = definition.entries["requires_openai_auth"] else { throw Failure.customProvider }
+            let oldEndpoint: String?
+            if let value = definition.entries["base_url"] {
+                guard case let .string(value) = value else { throw Failure.customProvider }
+                do { try requireLoopback(value) } catch { throw Failure.customProvider }
+                oldEndpoint = value
+            } else { oldEndpoint = nil }
+            // Exact generated block plus parsed field validation prevents taking
+            // ownership of edited definitions, headers, auth or nested tables.
+            let original = try customProviderBlock(endpoint: oldEndpoint, newline: newline)
+            guard text.components(separatedBy: Self.customProviderMarker).count == 2,
+                  let range = text.range(of: original),
+                  range.lowerBound == text.startIndex || text[..<range.lowerBound].hasSuffix(newline),
+                  range.upperBound == text.endIndex || text[range.upperBound...].hasPrefix(newline) else {
+                throw Failure.customProvider
+            }
+            output = text.replacingCharacters(in: range, with: desired)
+        } else {
+            guard !marked else { throw Failure.customProvider }
+            guard definitions?.sealed != true else { throw Failure.invalidConfig }
+            output = text + (text.isEmpty || text.utf8.last == 10 ? "" : newline) + desired + newline
+        }
+        guard output.utf8.count <= 1_024 * 1_024 else { throw Failure.invalidConfig }
+        let parsed = try CatalogTOML.parse(output)
+        guard case let .table(providers)? = parsed.entries["model_providers"],
+              case let .table(repaired)? = providers.entries["custom"] else { throw Failure.customProvider }
+        if let endpoint {
+            guard case .string(endpoint)? = repaired.entries["base_url"] else { throw Failure.customProvider }
+        } else {
+            guard repaired.entries["base_url"] == nil else { throw Failure.customProvider }
+        }
+        return Data(output.utf8)
+    }
+
+    private func customProviderBlock(endpoint: String?, newline: String) throws -> String {
+        var lines = [
+            "[model_providers.custom] " + Self.customProviderMarker,
+            "name = \"OpenAI\"",
+            "wire_api = \"responses\"",
+            "requires_openai_auth = true"
+        ]
+        if let endpoint {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.withoutEscapingSlashes]
+            lines.append("base_url = " + String(decoding: try encoder.encode(endpoint), as: UTF8.self))
+        }
+        return lines.joined(separator: newline)
     }
 
     private func requireLoopback(_ endpoint: String) throws {

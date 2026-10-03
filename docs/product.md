@@ -1,6 +1,6 @@
 # Miruun 产品说明
 
-文档日期：2026 年 10 月 2 日。对应源码：Miruun 0.4.1。产品阶段：实验性原生 macOS 菜单栏工具；实际构建、测试与运行验收见 [VALIDATION.md](../VALIDATION.md)。
+文档日期：2026 年 10 月 3 日。对应源码：Miruun 0.4.1 及未发布的 `custom` 历史接入修复，源码版本未变。产品阶段：实验性原生 macOS 菜单栏工具；实际构建、测试与运行验收见 [VALIDATION.md](../VALIDATION.md)。
 
 ## 产品目标
 
@@ -8,7 +8,7 @@
 
 用户只需选择实际使用的数据目录并启用一次守护，之后仍按原有方式使用 CC Switch 与本机代理。Miruun 在应用运行期间定期检查配置，识别受支持的本机 Responses/API Key 接入，保留原生 `openai` provider 标识，并把完整代理地址写入 `openai_base_url`。
 
-当前实现覆盖的是这个数据目录中**以原生 `openai` provider 创建的本地历史**。它不扫描历史来逐条改写，也不新建、导入或 fork 对话。以其他 provider ID 创建的历史、其他数据目录及云端账户资产不在当前覆盖范围。
+当前实现维护这个数据目录中**原生 `openai` 本地历史的接入**，并在切回官方 ChatGPT/OAuth 登录后补齐缺失的 `custom` provider 定义。旧历史仍保留原 provider ID；守护不扫描历史来逐条改写，也不新建、导入或 fork 对话。其他 provider ID、其他数据目录及云端账户资产不在当前覆盖范围。
 
 后台维护配置已经成为当前产品流程；早期 0.3.1 的“选中单个线程，退出客户端，再恢复和验证”设计仅作为研究与初始化历史保留，详见 [代码分析](analysis.md)。
 
@@ -20,6 +20,8 @@ Codex 0.159.2 的版本化源码显示，恢复旧对话时会读取持久化的
 
 因此，对于原生 `openai` 历史，较小的方案是保留这个标识，通过 Codex 支持的顶层 `openai_base_url` 指向本机代理。代理负责选择其已经授权的上游，Miruun 不增加账户池、另一套会话存储或聊天客户端。具体源码依据及边界见 [代码分析](analysis.md)。
 
+反向切换也有同一类问题：停用 CC Switch + CLIProxyAPI、恢复账号 A 的官方登录后，`custom` 定义可能被移除，但旧历史仍保存 `custom` ID，导致 `Model provider custom not found`。本次修复补齐该 ID 的配置定义，使冷恢复能够解析当前官方认证入口；不需要改写历史。
+
 ## 使用流程
 
 1. 通过现有接入工具配置可用的本机 Responses 代理和 API Key 登录。
@@ -27,6 +29,7 @@ Codex 0.159.2 的版本化源码显示，恢复旧对话时会读取持久化的
 3. 正常退出 Codex GUI 及其他 Codex 后端；Miruun 等待连续稳定采样，备份原配置与认证、接入既有代理 Key，再维护 `model_provider = "openai"` 和完整的 `openai_base_url`。
 4. 等待 Miruun 显示配置就绪后，再打开 Codex GUI，回到原对话主动续聊。
 5. 后续照常切换接入；需要调整客户端配置时仍先退出 Codex。正常状态仅在菜单栏中显示；无法安全处理时显示具体原因并停止此次写入。
+6. 停用代理、切回账号 A 时，先恢复官方 `openai` 入口及文件 ChatGPT/OAuth 登录，再退出 Codex；守护补齐缺失的 `custom` 定义并清理自己管理的本机地址。配置就绪后重新打开原对话。
 
 守护每两秒在串行队列中检查一次。应用提供暂停和可选的登录启动；暂停或退出会等待正在进行的检查结束，再停止后续维护。关闭 Miruun 后不另留独立守护进程。
 
@@ -36,16 +39,19 @@ Codex 0.159.2 的版本化源码显示，恢复旧对话时会读取持久化的
 
 | 条件 | 当前行为 |
 | --- | --- |
-| 原历史 provider | 原生 `openai` 本地历史，共用当前 builtin provider 定义，无需逐条处理 |
+| 原历史 provider | 原生 `openai` 历史共用 builtin 定义；`custom` 历史在官方文件 OAuth 下补齐缺失定义，无需逐条处理；其他 ID 不自动修复 |
 | 代理地址 | 明确的 `127.0.0.1`、`localhost` 或 `[::1]` HTTP/HTTPS 地址；保留端口与完整路径，拒绝 URL 用户信息、查询及片段 |
 | 目标自定义 provider | `base_url` 明确；支持 `requires_openai_auth = true` 配合文件 API Key，或 false 配合明确 inline bearer；`wire_api` 省略或为 `"responses"` |
 | 认证 | 支持文件 API Key；也支持当前自定义 provider 通过 `experimental_bearer_token` 提供 Key，并在备份后转为 Codex API Key 文件认证 |
 | 凭据存储 | 默认文件存储或明确 `cli_auth_credentials_store = "file"`；不猜测 keyring、auto 或 ephemeral 中的认证 |
 | 配置覆盖 | 包含 profile 或已知登录覆盖时停止；外部 CLI、host 或受管理配置的实际优先级仍需运行验收 |
 | 特殊 provider 设置 | 自定义认证、请求头、查询参数和其他额外 provider 字段无法只靠复制地址保留，当前停止处理 |
-| ChatGPT/OAuth 登录 | 当前选中受支持的 inline bearer provider 时，备份后转换为 API Key；官方 `openai` 模式下仅撤销本工具标记的代理地址，不改凭据 |
+| ChatGPT/OAuth 登录 | 当前选中受支持的 inline bearer provider 时，备份后转换为 API Key；官方 `openai` 模式下撤销本工具标记的代理地址、补齐缺失的 `custom` 定义，不改凭据 |
+| `custom` 定义 | 已有未标记定义保留；工具创建的定义随有效原生入口同步；被修改、含额外字段或非本机地址时停止；无法安全追加的 inline table 不改写 |
 
 `openai` 是 Codex 的保留 provider ID，不能依靠 `[model_providers.openai]` 覆盖它。守护使用顶层 `openai_base_url`，不会把 endpoint 简化为仅有 origin 的地址。原模型配置及其他 TOML 内容、表和注释均保留。
+
+补齐 `custom` 的条件是根 `model_provider` 为 `openai` 或省略、文件认证为 ChatGPT/OAuth，且该定义缺失。新增定义带 `# miruun-managed-custom-provider` 标记，使用 `name = "OpenAI"`、Responses 和 OpenAI 认证。OAuth 下省略 `base_url`，由 Codex 选择官方 ChatGPT 入口；不把 OAuth 凭据发送到旧代理。之后切回受支持的本机 API Key 接入时，已管理定义的 `base_url` 跟随完整 `openai_base_url`，回到 OAuth 时再次删除该地址。它默认使用 HTTP SSE，不承诺 builtin `openai` 的 WebSocket 能力。
 
 启用守护表示允许将当前代理接入统一为 Codex API Key 模式，原有文件认证先备份。Miruun 不校验代理内最终选中了哪个上游账户。它采用 builtin `openai` 的传输与能力设置；仅复制地址不能证明任意自定义 provider 的行为完全等价。
 
@@ -65,23 +71,24 @@ Miruun 本身不进行接入联网。用户在 Codex 中续聊时，实际客户
 
 产品目标中的连续性意味着回到同一个原对话，保留原 ID、项目关联与本地历史；是否正确加载背景，还需要原 GUI 中的实际回复验证。
 
-当前源码验证与公开机制分析支持“维护原生 provider ID 和入口配置”，尚未证明所有原对话均能在任意账户、模型或供应商之间无中断接续。Codex 的会话路由可能保持在内存中；CLIProxyAPI 的 WebSocket 增量请求还依赖连接与所选认证，账号变化可能要求重连和完整重放。加密 reasoning、压缩历史和工具状态的跨接入兼容性不能从配置结果推断。
+当前源码验证与公开机制分析支持“维护原生入口并补齐缺失的 `custom` 定义”，尚未证明所有原对话均能在任意账户、模型或供应商之间无中断接续。Codex 0.159.2 的 `thread/list` 默认按当前 provider 筛选，只有显式空 `modelProviders` 才包含所有 provider；补齐定义不保证 GUI 会显示全部 `custom` 历史。Codex 的会话路由还可能保持在内存中；CLIProxyAPI 的 WebSocket 增量请求依赖连接与所选认证，账号变化可能要求重连和完整重放。加密 reasoning、压缩历史和工具状态的跨接入兼容性不能从配置结果推断。
 
 完整运行验收应分别核对：
 
 - 启用后，连续切换与应用重开均能维护预期入口，配置、注释及模型未意外变化。
 - 多个原生 `openai` 原对话仍保持各自 ID、项目与历史，并能在原 GUI 中主动续聊。
+- 停用代理回到账号 A 后，旧 `custom` 原对话可打开并使用官方认证续聊；再启用代理时，同一历史跟随受支持的本机入口。
 - 实际请求到达预期本机代理；最终上游账户需代理提供独立证据。
 - OAuth、特殊认证、文件冲突和不支持的配置都按边界处理，没有泄露凭据或覆盖新配置。
 - GUI 重启、活动请求、WebSocket 重连、压缩和工具调用分别获得运行证据。
 
-本次开发未读取真实私人会话或数据库。为排查实际故障，只读检查了本机配置和认证文件是否存在，代理 Key 仅在内存中用于本机模型列表检查；未发送真实续聊请求。另在隔离数据目录中使用实际 Codex 后端和合成凭据、历史完成冷恢复验证。具体证据以 [VALIDATION.md](../VALIDATION.md) 为准；签名、公证、真实 GUI 接续与洁净机器分发仍是独立验收项。
+0.4.1 开发未读取真实私人会话或数据库；当时为排查故障只读检查了本机配置和认证文件是否存在，代理 Key 仅在内存中用于本机模型列表检查，未发送真实续聊请求；另在隔离数据目录中使用实际 Codex 后端和合成凭据、历史完成冷恢复验证。2026-10-03 的修复在合成环境复现了缺失 `custom` 的错误，补齐定义后以同一 ID 冷恢复，并在切回 mock 代理后重放历史；未验证官方 OAuth 请求、真实账号或真实 GUI。具体证据以 [VALIDATION.md](../VALIDATION.md) 为准；签名、公证与洁净机器分发仍是独立验收项。
 
 ## 实现与后续方向
 
 应用使用 Swift、AppKit 和 Foundation，已有研究引擎还使用 CryptoKit 与系统 SQLite3，没有第三方 Swift 包或 Python 运行依赖。当前主界面直接调用配置守护；早期原生恢复引擎保留为研究实现，不在后台流程中运行。
 
-后续首先验证原生 `openai` 多对话、真实 CC Switch 写入时序、固定入口下的代理上游切换与 GUI 重载。只有实际协议与运行证据支持后，才扩大到其他历史 provider 或减少重启步骤；不把修改历史文件当作通用迁移承诺。
+后续首先验证原生 `openai` 多对话、`custom` 历史回到官方账号再切回代理、真实 CC Switch 写入时序、固定入口下的代理上游切换与 GUI 重载。只有实际协议与运行证据支持后，才扩大到更多历史 provider 或减少重启步骤；不把修改历史文件当作通用迁移承诺。
 
 ## 名称与视觉
 
