@@ -103,4 +103,50 @@ final class NativeProcessTests: XCTestCase {
         XCTAssertTrue(capabilities.sourceAuditedCandidate)
         XCTAssertTrue(capabilities.indexedCatalog)
     }
+
+    func testLaunchHomeProbePreservesLiteralPathAndIgnoresShellBanner() throws {
+        let shell = try executable("""
+        test "$1" = '-ilc'
+        test "$CODEX_SHELL" = '1'
+        test "$DISABLE_AUTO_UPDATE" = 'true'
+        test "$ZSH_TMUX_AUTOSTARTED" = 'true'
+        test "$ZSH_TMUX_AUTOSTART" = 'false'
+        printf '%s\\n' 'SYNTHETIC_SHELL_BANNER'
+        exec /bin/sh -c "$2"
+        """)
+        let home = root.appendingPathComponent("data ' $(ignored) `ignored` 中文")
+        XCTAssertNoThrow(try NativeDiscovery.verifyLaunchHome(home, shell: shell, environment: ["HOME": root.path]))
+    }
+
+    func testLaunchHomeProbeRejectsShellOverrideAndUnsetWithoutSurfacingOutput() throws {
+        for setup in ["export CODEX_HOME='/SYNTHETIC_OTHER_HOME'", "unset CODEX_HOME"] {
+            let shell = try executable("""
+            printf '%s\\n' 'SYNTHETIC_PRIVATE_OUTPUT'
+            \(setup)
+            exec /bin/sh -c "$2"
+            """)
+            XCTAssertThrowsError(try NativeDiscovery.verifyLaunchHome(root, shell: shell, environment: [:])) {
+                XCTAssertEqual(($0 as? NativeEngineError)?.code, "launch_home_overridden")
+                XCTAssertFalse(($0 as? NativeEngineError)?.message.contains("SYNTHETIC") ?? true)
+            }
+        }
+    }
+
+    func testLaunchHomeProbeRejectsFailedShellWithoutSurfacingOutput() throws {
+        let shell = try executable("printf '%s' 'SYNTHETIC_PRIVATE_OUTPUT'; exit 1")
+        XCTAssertThrowsError(try NativeDiscovery.verifyLaunchHome(root, shell: shell, environment: [:])) {
+            XCTAssertEqual(($0 as? NativeEngineError)?.code, "launch_shell_failed")
+            XCTAssertFalse(($0 as? NativeEngineError)?.message.contains("SYNTHETIC") ?? true)
+        }
+    }
+
+    func testLaunchHomeProbeDetectsRealLoginShellProfileOverrideInDisposableHome() throws {
+        let environment = ["HOME": root.path, "ZDOTDIR": root.path, "PATH": "/usr/bin:/bin"]
+        let shell = URL(fileURLWithPath: "/bin/zsh")
+        XCTAssertNoThrow(try NativeDiscovery.verifyLaunchHome(root, shell: shell, environment: environment))
+        try Data("export CODEX_HOME='/SYNTHETIC_OTHER_HOME'\n".utf8).write(to: root.appendingPathComponent(".zprofile"))
+        XCTAssertThrowsError(try NativeDiscovery.verifyLaunchHome(root, shell: shell, environment: environment)) {
+            XCTAssertEqual(($0 as? NativeEngineError)?.code, "launch_home_overridden")
+        }
+    }
 }

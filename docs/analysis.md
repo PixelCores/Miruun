@@ -1,12 +1,12 @@
 # Miruun 配置守护与初始化分析
 
-日期：2026 年 10 月 3 日。包含 Miruun 0.4.1 及未发布的 `custom` 历史接入修复，源码版本未变。分析对象为 `/Users/pixelkernel/Downloads/ContextBridgeSwift` 的本地交付，以及与当前接入问题相关的公开版本化源码。修改落在 Miruun，原下载目录保持原样。当前构建与测试事实见 [VALIDATION.md](../VALIDATION.md)。
+日期：2026 年 10 月 3 日。包含 Miruun 0.4.1、已合并的 `custom` 历史接入修复及启动前准备入口，源码版本未变。分析对象为 `/Users/pixelkernel/Downloads/ContextBridgeSwift` 的本地交付，以及与当前接入问题相关的公开版本化源码。修改落在 Miruun，原下载目录保持原样。当前构建与测试事实见 [VALIDATION.md](../VALIDATION.md)。
 
 ## 当前方向：一次启用，维护 openai 与缺失的 custom 接入
 
-最新需求是后台运行，在切换接入后让原来的所有对话继续保有上下文，不再让用户逐个选择线程。Miruun 因此把主界面收敛为数据目录、一次启用、状态、暂停和可选登录启动，后台每两秒串行检查配置。
+最新需求是在切换接入后继续原来的对话，并省去手动等待配置就绪。Miruun 保留数据目录、一次启用、状态、暂停和可选登录启动，后台每两秒串行检查配置；菜单栏浮窗概览与快捷图标提供“打开 Codex”，把准备和启动串起来。
 
-当前最小实现是维护 `CODEX_HOME/config.toml` 的原生 `openai` 标识与入口，并在切回官方文件 ChatGPT/OAuth 登录时补齐缺失的 `custom` 定义。不会读取或批量改写 sessions/SQLite，不恢复线程，不启动 Codex 后端，不发用户回合。当前还支持 CC Switch 在 provider 中配置 `experimental_bearer_token` 的形态：复用这份本机代理 Key，在备份后为内置入口写入 Codex API Key 文件认证。所有变更均等待客户端与后端退出，Key 不进入状态或日志。
+当前最小实现是维护 `CODEX_HOME/config.toml` 的原生 `openai` 标识与入口，并在切回官方文件 ChatGPT/OAuth 登录时补齐缺失的 `custom` 定义。不会读取或批量改写 sessions/SQLite，不恢复线程，也不发用户回合。启动入口在守护启用时先重新检查，通过后由 `NSWorkspace` 打开 `com.openai.codex`，传入同一个 `CODEX_HOME`；不直接启动或修改内嵌后端。当前还支持 CC Switch 在 provider 中配置 `experimental_bearer_token` 的形态：复用这份本机代理 Key，在备份后为内置入口写入 Codex API Key 文件认证。所有变更均等待客户端与后端退出，Key 不进入状态或日志。
 
 这一范围与产品目标之间还有明确边界：历史 provider ID 不会自动变成 `openai`，缺失定义的自动修复仅针对已知 `custom` ID；其他数据目录、云端资产与任意跨供应商上下文兼容不在本次实现中。保留入口配置不是活动 GUI 已热切换、上游账户已更换或所有原对话已成功续聊的运行证明。
 
@@ -26,7 +26,7 @@
 
 Codex 0.159.2 的 `thread/list` 默认还会按当前 provider 筛选，而显式空的 `modelProviders` 包含所有 provider：[thread_processor.rs L5481–5490](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/app-server/src/request_processors/thread_processor.rs#L5481-L5490)。保留原生 `openai` ID 也避免靠新增 ID 来切断原生历史列表的配置一致性；补齐 `custom` 定义不能证明 GUI 会列出全部 `custom` 历史。Miruun 的守护不调用这个接口，也不查询历史来计算覆盖数量。
 
-## 未发布修复：停用代理后 custom 历史无法加载
+## 已合并修复：停用代理后 custom 历史无法加载
 
 2026-10-03 的故障是用户停用 CC Switch + CLIProxyAPI、回到账号 A 后，打开此前以 `custom` 创建的对话时出现 `Model provider custom not found`。旧历史保留 provider ID，而当前 `config.toml` 已不再定义它；恢复流程在发出模型请求前就无法解析 provider。仅恢复全局 `model_provider = "openai"` 或移除本机地址，不能解决这个缺失引用。
 
@@ -43,7 +43,7 @@ requires_openai_auth = true
 
 已有未标记的 `custom` 定义仍由用户或接入工具管理，原样保留。Miruun 只维护自己生成且内容仍完整匹配的定义：之后切回有效的本机 API Key 接入时，为其同步完整 `openai_base_url`；回到 OAuth 时删除该定义的 `base_url`，并按原规则清理自己标记的根地址。管理块被修改、含额外字段或非本机地址、标记异常，以及无法安全追加的 inline table 都会停止调整。缺失 `custom` 的首次补齐只发生在官方 OAuth 模式，不在任意 API Key 配置下新建别名。
 
-此次在隔离的合成数据环境中使用实际 Codex 后端复现了原错误；补齐定义后以同一 ID 冷恢复，并在切回 mock 代理后成功重放历史。各次 `thread/resume` 均未传入模型或 provider 覆盖。官方 OAuth 请求、真实 GUI 和账号 A/B 未验证；这些证据证明配置解析与合成冷恢复，不证明真实账号的上下文兼容或列表可见性。具体运行记录见 [VALIDATION.md](../VALIDATION.md)。
+此次在隔离的合成数据环境中使用实际 Codex 后端复现了原错误；补齐定义后以同一 ID 冷恢复，并在切回 mock 代理后成功重放历史。各次 `thread/resume` 均未传入模型或 provider 覆盖。PR #1 已合并，用户重启应用后确认回到账号 A 可以继续此前的 `custom` 对话。这是该故障场景的用户实测反馈，不证明完整 A → B → A、全部历史、上游归属或新启动入口的实机验收。具体运行记录见 [VALIDATION.md](../VALIDATION.md)。
 
 ## 0.4.1 修正的实际兼容缺口
 
@@ -59,10 +59,12 @@ requires_openai_auth = true
 
 ```mermaid
 flowchart LR
-    UI[菜单栏：一次启用与状态] -->|串行定期检查| Guard[ContinuityGuard]
+    UI[菜单栏浮窗：守护与打开 Codex] -->|串行定期检查或启动准备| Guard[ContinuityGuard]
     Guard -->|检查并接入既有代理 Key| Auth[auth.json]
     Guard -->|备份后维护原生入口与 custom 定义| Config[config.toml]
-    Config -->|GUI 重载时采用| Codex[用户的原 Codex GUI]
+    Guard -->|新检查就绪或保存完成| Launch[NSWorkspace]
+    Launch -->|同一 CODEX_HOME| Codex[用户的原 Codex GUI]
+    Config -->|启动时加载| Codex
 ```
 
 守护读取当前用户拥有的普通文件，拒绝路径链接、硬链接、异常所有权、超限内容和无法安全解析的 TOML。它要求连续两次 `config.toml` 与 `auth.json` 内容相同，保存前再次核对两者，先保存私有配置备份，再以临时文件、原子替换与目录同步完成配置写入。接管时还备份原 auth，或记录 auth 原来不存在；配置与认证备份均含敏感信息，只留在本机私有目录。两文件按认证先、配置后的顺序分别提交，避免先切换入口却仍保留旧 OAuth 或缺失认证；每个数据目录的 pending 标记与阶段回执记录半提交，异常和崩溃重开不会自动重试或回滚。
@@ -74,6 +76,18 @@ flowchart LR
 本工具写入的根 `openai_base_url` 行以注释 `# miruun-managed-openai-base-url` 标记。纯 OAuth、当前 provider 为 `openai`、地址仍为 loopback 且标记准确时，守护经过同样的稳定采样、备份与最终比较，删除这条根地址行并维护上述 `custom` 定义，不改变模型、根 provider 或 auth。未标记的根地址、根地址已被改成其他目标，或当前选中的自定义 provider 无法接入受支持的代理认证时停止，不自动恢复旧配置。
 
 写入前及提交前均检查 Codex 客户端/后端已退出。原子 rename 不能让不合作的其他写入者参与锁定；最终比较之后仍有外部写入的窗口。备份与稳定采样减少已观察冲突，不能证明跨程序写入互斥。暂停和退出会等待当前检查结束，以免流程被界面动作中断。
+
+启动请求复用守护串行队列和两秒调度，不使用旧状态放行；即使不需要修改配置，也要求两次稳定采样。客户端仍活动时重置稳定窗口并等待，不强制退出；重复请求合并，暂停或退出取消尚未发出的启动，错误可观察。可选“打开 Miruun 时自动打开 Codex”让手动首次启动和 reopen 直接进入相同入口；关闭该选项或暂停守护时显示浮窗，启动错误打开完整状态子页。系统登录项启动始终静默。模式由当前文件配置与认证决定，不探测代理在线状态来猜测账户意图，也不恢复旧 OAuth 备份。
+
+当前 AppKit 界面复用 `MenuAppDelegate` 的控制与状态，`MenuPanelView` 绘制土星和 332 × 379 pt 深色箭头浮窗。概览保持守护、Codex 启动、自动打开三行；八个快捷图标映射已有操作，设置子页承载目录选择、配置备份与登录项，状态子页以滚动区域显示可选择的完整文字。外观中的滑轨表达当前开关或启动状态，不代表账号信息或请求进度。
+
+浮窗收起与后台生命周期分开：土星按钮再次点击、Esc 或应用失去焦点仅隐藏界面，不改变守护或待启动请求。周期检查只更新显示内容，不反复打开浮窗；启动失败显式打开完整状态。设置与状态子页的“返回”回到概览，`⌘,` 打开设置；底部退出与 `⌘Q` 沿原串行停止路径，等待当前检查完成后结束应用。
+
+选择应用外的前置入口是为了保证准备发生在配置加载之前。[官方 hooks 文档](https://learn.chatgpt.com/docs/hooks)将 `SessionStart` 定义为会话启动事件；本机 Codex 0.159.2 核对确认，[配置阶段就会拒绝缺失的 provider](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/core/src/config/mod.rs#L3812-L3820)，发生在该事件之前，因此不能用它修复本次加载失败。直接使用原 Codex 启动入口绕过 Miruun，仍没有先行保证；已经存在的会话也不会因此热切换。
+
+本机桌面包 `26.928.21956` 另有目录传递边界：`app.asar` 中 `startup-requirements-Da3KfG8r.js` 在读取后端配置前合并登录 shell 的环境；`application-network-startup-D74LEWDz.js` 以用户登录 shell、`-ilc` 及继承环境获取变量，再把合并后的 `CODEX_HOME` 传给本机后端。因此仅给 `NSWorkspace` 设置变量可能被 shell 中的固定导出覆盖。启动入口复用 `NativeDiscovery`，以相同参数和四个 shell 初始化标志只输出该目录，拒绝不匹配、空值或执行失败；随后重新读配置与客户端状态。单次 timer 在检查完成两秒后再次安排采样，避免慢 shell 后补发事件缩短稳定窗口。
+
+这项预检核实的是探测进程的结果，不能证明按父进程、cwd 或命令内容分支的任意 shell 脚本与桌面进程等价；这些覆盖不在支持保证内。未使用 `CODEX_ELECTRON_USER_DATA_PATH` 来保护变量，因为同一桌面包也用它覆盖 GUI 数据路径并改变 macOS 单实例锁行为。上述安装包机制仅对本机核对版本成立，不能当作未来版本的稳定公开 API。
 
 主 GUI 已不调用早期 helper/原生恢复流程。原 `MiruunEngine`、备份、事务与测试保留为研究代码；旧单线程 UI、`BridgeRunner`、`ConfirmationSheet` 与 UI 私有未决状态已移除。旧 helper 独立入口仍没有原 UI 的持久未决保护，不能把它当作当前产品的操作入口。
 

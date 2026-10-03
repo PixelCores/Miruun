@@ -1,6 +1,59 @@
 # Miruun 验证记录
 
-## 未发布：官方登录恢复 custom 历史
+## 未发布：参考图深色菜单栏浮窗
+
+日期：2026 年 10 月 3 日。沿用启动入口分支及 `main@1a43f2dae5fee5ce7d4fbebc60a9fe4872747d4d` 基线，源码版本未变。
+
+按照用户参考图重做 AppKit 界面：332 × 379 pt 深色箭头浮窗、土星图标、八个快捷图标、三行卡片与底部设置/退出。概览三行连接 Miruun 守护、Codex 启动与自动打开的实际状态；滑轨表达开关或等待状态，不展示音量、账户或进度。设置和完整状态复用同一浮窗，保持真实目录选择、配置备份、登录项及可选择的完整状态文字。
+
+| 验证 | 结果 |
+| --- | --- |
+| XCTest | 界面重构后全量 124 项通过（BridgeEngine 111、BridgeCore 13），未修改核心源码或测试 |
+| Release 与打包 | 最终样式和浮窗清理修正后重新编译通过，无 warning/error；plist 校验通过 |
+| 参考布局 | 实际运行窗口截图为 664 × 758 px（Retina 2×），即 332 × 379 pt；检查深色表面、土星、导航、卡片、行间距与底部居中按钮 |
+| 概览与偏好 | 自动打开下拉关闭后状态文字同步；快捷图标重新开启后一致；重开包保留偏好。守护启用/暂停、启动入口禁用/恢复均可见 |
+| 最终包等待与取消 | 已有 Codex 活动时保持等待，入口禁用；Esc 后通过 `⌘,` 打开设置，等待状态保留；暂停取消请求，重新启用恢复就绪与启动入口 |
+| 设置与完整状态 | 最终包设置、状态与返回实际可用，目录和完整等待原因可读，登录项名称保留可访问标签；守护启用时禁止选目录。先行同一界面包已打开目录面板并取消，原路径不变 |
+| 独立静态复核 | worker、稳定采样、启动事务和 UUID 取消流程保持原样；下拉使用 selectedTag；隐藏/退出清理监听，目录面板与菜单 tracking 有保护 |
+
+首次测试中，既有合成进程测试 `NativeProcessTests.testTruncatedOrInvalidTrailingOutputPreventsCleanShutdown` 出现初始化超时；单项重试通过，随后两次完整构建测试通过。没有弱化断言或修改测试。全量构建日志为 `/private/tmp/miruun-reference-ui-polished-build.log`，最终 Release 日志为 `/private/tmp/miruun-reference-ui-release.log`。
+
+最终应用：`dist/20261003-203014-reference-ui/Miruun.app`。已正常退出先行包并运行此包；进程路径核对一致。守护及自动打开已恢复启用，登录项保持关闭，验证用待启动请求已取消；没有关闭当前 Codex、发送真实回合或读取历史数据库。压缩包为 `/private/tmp/Miruun-reference-ui.zip`，两份可执行文件及 plist 与应用一致，执行权限保留。
+
+界面边界：外部点击与失活收起经过静态复核，未单独取得全局点击的运行证据；没有执行系统登录项注册，也未完成 VoiceOver 或其他屏幕/系统版本验收。核心启动入口的真实冷启动与两种模式往返续聊仍遵循下方记录的未验收边界。
+
+## 未发布：启动前自动准备接入配置
+
+日期：2026 年 10 月 3 日。基于 `main@1a43f2dae5fee5ce7d4fbebc60a9fe4872747d4d`；本次不调整应用版本号。
+
+新增菜单与设置中的“打开 Codex”，以及“打开 Miruun 时自动打开 Codex”选项。启动请求复用串行守护与两秒定时检查，重新读取当前配置和认证，确认相同样本及客户端退出后，通过 `NSWorkspace` 启动 `com.openai.codex`，传入所选 `CODEX_HOME`。暂停或退出取消尚未发出的请求；系统登录项仍静默。
+
+| 验证 | 结果 |
+| --- | --- |
+| 全量 XCTest | 124 项通过，0 失败（BridgeEngine 111、BridgeCore 13） |
+| 连续性守护 | 41 项通过；新增 5 项启动前检查回归，全部使用临时合成配置与注入的进程状态 |
+| Release 与打包 | Miruun / MiruunEngine 成功，日志无 warning 或 error；plist 校验通过 |
+| 独立复核 | 检查主线程与 worker 边界、请求合并、暂停/退出取消、旧回调失效及失败状态保留；未发现未解决问题 |
+| GUI | 先行包及最终包均已实际打开；最终包布局正常，显示官方配置就绪，菜单和设置启动入口、自动打开选项可见 |
+| 活跃客户端与暂停 | 最终包复核通过：点击启动后按钮及菜单入口禁用并等待已有 Codex 退出；暂停取消请求，重新启用后按钮恢复，无 Codex 重启 |
+| 手动再次打开 | 先行包关闭设置后通过 Finder 双击进入自动等待；最终包保留设置窗口时再次双击同样进入自动等待。暂停并重新启用后请求取消，自动打开偏好保留 |
+| GitHub CI | PR #2 的 [macOS run #6](https://github.com/PixelCores/Miruun/actions/runs/37105407166) 已通过，对应功能提交 `cf989e058649f340d6aafb5523583b86a36f0439` |
+
+新增测试覆盖官方与代理的配置无需写入时仍等待客户端、首次就绪配置也需稳定采样、客户端退出后重新采样、较早就绪结果不掩盖新配置变化、不支持的新配置拒绝，以及无法确认进程状态时不写入文件。
+
+随后核对本机桌面包 `26.928.21956`，发现登录 shell 可能覆盖传入的目录。补上目录预检及 4 项进程测试，覆盖 shell 元字符与中文路径、初始化输出、覆盖或 unset、非零退出，以及临时 HOME 中真实 zsh 的 `.zprofile` 覆盖；不执行用户的真实登录 shell。检查后重新读取配置和客户端，并改为单次 timer 完成后隔两秒重新安排，防止慢检查导致紧接着补采样。
+
+构建命令：
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer bash scripts/build-app.sh --no-reveal --disable-sandbox
+```
+
+最终产物：`dist/20261003-135308-3064/Miruun.app`。日志：`/private/tmp/miruun-mode-launch-final-build.log`。先行 GUI 产物为 `dist/20261003-133049-91459/Miruun.app`，截图为 `/private/tmp/miruun-mode-launch-ui.png`。之后已正常退出先行包并运行最终包，进程路径复核一致；最终包的设置布局、等待、取消与再次打开均已复核。保留守护启用及自动打开偏好，登录项关闭；本次验证的待启动请求已取消。`/private/tmp/Miruun-auto-mode-launch.zip` 内两个可执行文件和 plist 与最终产物逐字节一致，执行权限保留。未关闭当前 Codex，未发送真实回合，也未读取真实会话或数据库。
+
+边界：**本次没有通过新入口实际冷启动 Codex，也没有完成两种真实模式的往返续聊验收。** `CODEX_HOME` 的传递与异步成功/失败回调已按本机 AppKit SDK、安装包和代码复核，尚无真实启动的运行证据。目录预检能识别固定导出冲突，无法证明按父进程、cwd 或命令内容分支的任意 shell 脚本与桌面启动完全等价；这些覆盖不在支持保证内。外部程序可在最后检查后再次写配置或启动客户端；此入口不控制这些程序，不提供活动会话热切换，也不按代理在线状态恢复旧凭据。系统登录项静默、Dock 固定、签名及洁净机器仍需实机验收。
+
+## 已合并：官方登录恢复 custom 历史
 
 日期：2026 年 10 月 3 日。基于 `main@caa3d27539f9d21823392e551d42dde0824f5802`；本次不调整应用版本号。
 
@@ -27,7 +80,9 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer bash scripts/build-app.
 
 独立后端验证脚本为 `/private/tmp/miruun-custom-alias-contract.py`；汇总、完整 RPC 和 mock HTTP 请求保存在 `/private/tmp/miruun-codex-contract-8sz3bfn9/`。所有 `thread/resume` 只传 thread ID 和 `excludeTurns`，没有指定 provider/model。后端使用隔离 HOME/CODEX_HOME、合成认证和历史；沙盒禁止访问 `/Users` 和外网，仅允许两个临时 localhost 端口。这些临时文件不是发布依赖。
 
-边界：**OAuth 冷恢复成功不代表真实账号 A 已完成官方续聊。** 合成 OAuth 的实际推理在外网隔离下停于 `workspace routing discovery failed`；真实账号、官方响应、GUI 续写、加密/压缩上下文与 WebSocket 仍未验证。`thread/list` 默认仍按当前 provider 筛选，`modelProviders = []` 才包含所有 provider；本修复不改变 GUI 各列表的筛选方式，也不将历史 provider 改成 `openai`。Keychain、外部认证和配置覆盖继续遵循现有支持边界。
+后续用户验证：重启修复包后，用户确认停用代理、回到账号 A 可以继续原 `custom` 历史对话。PR #1 已合并到 main，合并提交为 `1a43f2dae5fee5ce7d4fbebc60a9fe4872747d4d`。该反馈验证了报告的故障场景；未独立检查官方响应的账户归属，也不代表完整 A → B → A、全部历史或其他连接行为已经验收。
+
+隔离测试边界：合成 OAuth 的实际推理在外网隔离下停于 `workspace routing discovery failed`；加密/压缩上下文与 WebSocket 仍未验证。`thread/list` 默认仍按当前 provider 筛选，`modelProviders = []` 才包含所有 provider；本修复不改变 GUI 各列表的筛选方式，也不将历史 provider 改成 `openai`。Keychain、外部认证和配置覆盖继续遵循现有支持边界。
 
 ## 0.4.1 代理认证接入与启动修复
 

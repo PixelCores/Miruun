@@ -8,6 +8,38 @@ public struct BackendCapabilities {
 }
 
 public enum NativeDiscovery {
+    /// The desktop app merges its interactive login shell environment before
+    /// spawning the local backend. Reject a conflicting CODEX_HOME without
+    /// capturing or displaying the complete environment.
+    public static func verifyLaunchHome(_ home: URL, shell: URL? = nil, environment: [String: String]? = nil) throws {
+        let executable: URL
+        if let shell { executable = shell }
+        else {
+            guard let value = getpwuid(getuid())?.pointee.pw_shell,
+                  !String(cString: value).isEmpty else {
+                throw NativeEngineError("launch_shell_unknown", "无法确认登录 shell；未启动 Codex。")
+            }
+            executable = URL(fileURLWithPath: String(cString: value))
+        }
+        var variables = environment ?? ProcessInfo.processInfo.environment
+        variables["CODEX_HOME"] = home.path
+        variables["CODEX_SHELL"] = "1"
+        variables["DISABLE_AUTO_UPDATE"] = "true"
+        variables["ZSH_TMUX_AUTOSTARTED"] = "true"
+        variables["ZSH_TMUX_AUTOSTART"] = "false"
+        let output: String
+        do {
+            output = try runTool(executable, ["-ilc", #"printf '\036MIRUUN_CODEX_HOME\037%s\036' "$CODEX_HOME""#], environment: variables, timeout: 10)
+        } catch {
+            throw NativeEngineError("launch_shell_failed", "无法核对登录 shell 使用的数据目录；未启动 Codex。")
+        }
+        let marker = "\u{1e}MIRUUN_CODEX_HOME\u{1f}"
+        guard let range = output.range(of: marker, options: .backwards),
+              output[range.upperBound...] == home.path + "\u{1e}" else {
+            throw NativeEngineError("launch_home_overridden", "登录 shell 覆盖了 Codex 数据目录；请移除该覆盖或选择相同目录后重试。")
+        }
+    }
+
     /// Captures only bounded tool stdout; caller never surfaces arbitrary tool errors.
     public static func runTool(_ executable: URL, _ arguments: [String], environment: [String: String]? = nil, cwd: URL? = nil, timeout: TimeInterval = 30) throws -> String {
         let process = Process(), output = Pipe()

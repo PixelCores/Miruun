@@ -167,6 +167,74 @@ final class ContinuityGuardTests: XCTestCase {
         XCTAssertEqual(guarder.check().phase, .ready)
     }
 
+    func testLaunchWaitsForClientsEvenWhenOAuthConfigurationIsAlreadyReady() throws {
+        try writeConfig("model_provider = \"openai\"\n" + managedCustom())
+        try writeAuth(["auth_mode": "chatgpt", "tokens": ["access_token": "SYNTHETIC_OAUTH"]])
+        let before = try Data(contentsOf: config), authBefore = try Data(contentsOf: auth)
+        var active = true
+        let guarder = ContinuityGuard(home: home, backupDirectory: backups, clientsAreRunning: { active })
+        XCTAssertEqual(guarder.check().phase, .ready)
+        XCTAssertEqual(guarder.checkForLaunch().phase, .waiting)
+        active = false
+        XCTAssertEqual(guarder.checkForLaunch().phase, .waiting)
+        XCTAssertEqual(guarder.checkForLaunch().phase, .ready)
+        XCTAssertEqual(try Data(contentsOf: config), before)
+        XCTAssertEqual(try Data(contentsOf: auth), authBefore)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: backups.path))
+    }
+
+    func testLaunchWaitsForClientsEvenWhenProxyConfigurationIsAlreadyReady() throws {
+        try writeConfig("model_provider = \"openai\"\nopenai_base_url = \"http://localhost:8317/v1\"\n")
+        var active = true
+        let guarder = ContinuityGuard(home: home, backupDirectory: backups, clientsAreRunning: { active })
+        XCTAssertEqual(guarder.check().phase, .ready)
+        XCTAssertEqual(guarder.checkForLaunch().phase, .waiting)
+        active = false
+        XCTAssertEqual(guarder.checkForLaunch().phase, .waiting)
+        XCTAssertEqual(guarder.checkForLaunch().phase, .ready)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: backups.path))
+    }
+
+    func testLaunchRequiresStableSamplesAgainAfterClientsExit() throws {
+        try writeConfig(inlineProvider())
+        var active = false
+        let guarder = ContinuityGuard(home: home, backupDirectory: backups, clientsAreRunning: { active })
+        XCTAssertEqual(guarder.checkForLaunch().phase, .waiting)
+        active = true
+        XCTAssertEqual(guarder.checkForLaunch().phase, .waiting)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: backups.path))
+        active = false
+        XCTAssertEqual(guarder.checkForLaunch().phase, .waiting)
+        XCTAssertEqual(guarder.checkForLaunch().phase, .updated)
+        XCTAssertEqual(guarder.checkForLaunch().phase, .ready)
+        XCTAssertEqual(try CatalogTOML.parse(String(contentsOf: config, encoding: .utf8)).entries["model_provider"].stringValue, "openai")
+    }
+
+    func testLaunchChecksCurrentConfigurationInsteadOfRetainingEarlierReadyStatus() throws {
+        try writeConfig("model_provider = \"openai\"\nopenai_base_url = \"http://localhost:8317/v1\"\n")
+        let guarder = ContinuityGuard(home: home, backupDirectory: backups, clientsAreRunning: { false })
+        XCTAssertEqual(guarder.checkForLaunch().phase, .waiting)
+        XCTAssertEqual(guarder.checkForLaunch().phase, .ready)
+        try writeConfig(provider(endpoint: "http://localhost:8318/v1"))
+        XCTAssertEqual(guarder.checkForLaunch().phase, .waiting)
+        XCTAssertEqual(guarder.checkForLaunch().phase, .updated)
+        XCTAssertEqual(try CatalogTOML.parse(String(contentsOf: config, encoding: .utf8)).entries["openai_base_url"].stringValue, "http://localhost:8318/v1")
+        try writeConfig("model_provider = \"proxy\"\n[model_providers.proxy]\nbase_url = \"https://remote.example/v1\"\nrequires_openai_auth = true\n")
+        XCTAssertEqual(guarder.checkForLaunch().phase, .blocked)
+    }
+
+    func testLaunchBlocksWhenClientStateCannotBeVerifiedWithoutWriting() throws {
+        try writeConfig(inlineProvider())
+        let before = try Data(contentsOf: config), authBefore = try Data(contentsOf: auth)
+        let guarder = ContinuityGuard(home: home, backupDirectory: backups, clientsAreRunning: {
+            throw NSError(domain: "SyntheticProcessFailure", code: 1)
+        })
+        XCTAssertEqual(guarder.checkForLaunch().phase, .blocked)
+        XCTAssertEqual(try Data(contentsOf: config), before)
+        XCTAssertEqual(try Data(contentsOf: auth), authBefore)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: backups.path))
+    }
+
     func testOAuthRepairsMissingCustomAfterStableSamplesWithoutChangingCredentials() throws {
         let text = "model_provider = \"openai\"\nmodel = \"original-model\"\n"
         try writeConfig(text)
