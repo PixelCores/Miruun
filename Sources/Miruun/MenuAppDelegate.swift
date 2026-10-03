@@ -91,7 +91,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         applicationMenu.autoenablesItems = false
         NSApp.mainMenu = mainMenu
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.image = MenuPanelView.orbitImage()
+        statusItem.button?.image = MenuPanelView.moonImage()
         statusItem.button?.target = self
         statusItem.button?.action = #selector(toggleWindow)
     }

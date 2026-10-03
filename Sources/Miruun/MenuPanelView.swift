@@ -71,8 +71,8 @@ final class MenuPanelView: NSView {
         NSColor.white.withAlphaComponent(0.18).setStroke()
         surface.lineWidth = 0.5
         surface.stroke()
-        Self.orbitImage(size: NSSize(width: 32, height: 18))
-            .draw(in: NSRect(x: 17, y: 29, width: 32, height: 18))
+        Self.moonImage(size: NSSize(width: 28, height: 28))
+            .draw(in: NSRect(x: 19, y: 25, width: 28, height: 28))
 
         if page == 0 {
             drawContainer(NSRect(x: 16, y: 75, width: 300, height: 28), radius: 14)
@@ -111,47 +111,28 @@ final class MenuPanelView: NSView {
                 blue: CGFloat(hex & 0xff) / 255, alpha: 1)
     }
 
-    static func orbitImage(size: NSSize = NSSize(width: 24, height: 14)) -> NSImage {
+    static func moonImage(size: NSSize = NSSize(width: 18, height: 18)) -> NSImage {
         let image = NSImage(size: size, flipped: true) { _ in
             NSGraphicsContext.saveGraphicsState()
             defer { NSGraphicsContext.restoreGraphicsState() }
             let scale = NSAffineTransform()
-            scale.scaleX(by: size.width / 48, yBy: size.height / 24)
+            scale.scaleX(by: size.width / 24, yBy: size.height / 24)
             scale.concat()
 
-            let ring = NSBezierPath(ovalIn: NSRect(x: 0, y: 5, width: 48, height: 14))
-            ring.appendOval(in: NSRect(x: 3, y: 7, width: 42, height: 10))
-            ring.windingRule = .evenOdd
-            let tilt = NSAffineTransform()
-            tilt.translateX(by: 24, yBy: 12)
-            tilt.rotate(byDegrees: -14)
-            tilt.translateX(by: -24, yBy: -12)
-            ring.transform(using: tilt as AffineTransform)
             NSColor.white.setFill()
-            ring.fill()
-            NSBezierPath(ovalIn: NSRect(x: 12, y: 0, width: 24, height: 24)).fill()
-
-            // Remove the narrow gap in the foreground ring from this image only.
-            let gap = NSBezierPath()
-            gap.move(to: NSPoint(x: 7.5, y: 18.5))
-            gap.curve(to: NSPoint(x: 40.5, y: 8),
-                      controlPoint1: NSPoint(x: 17, y: 24),
-                      controlPoint2: NSPoint(x: 37, y: 13))
-            gap.lineWidth = 1.3
-            gap.lineCapStyle = .round
+            NSBezierPath(ovalIn: NSRect(x: 1, y: 1, width: 22, height: 22)).fill()
+            // Alpha shading keeps the lunar craters visible in both template tints.
             NSGraphicsContext.current?.compositingOperation = .destinationOut
-            NSColor.white.setStroke()
-            gap.stroke()
-            NSGraphicsContext.current?.compositingOperation = .sourceOver
-
-            let foreground = NSBezierPath()
-            foreground.move(to: NSPoint(x: 2.5, y: 15.5))
-            foreground.curve(to: NSPoint(x: 45, y: 6),
-                             controlPoint1: NSPoint(x: 0, y: 29),
-                             controlPoint2: NSPoint(x: 35, y: 24))
-            foreground.lineWidth = 2.3
-            foreground.lineCapStyle = .round
-            foreground.stroke()
+            NSColor.white.withAlphaComponent(0.28).setFill()
+            for crater in [
+                NSRect(x: 6, y: 5, width: 4, height: 4),
+                NSRect(x: 13, y: 6, width: 3, height: 3),
+                NSRect(x: 8, y: 12, width: 5, height: 4),
+                NSRect(x: 15, y: 14, width: 3, height: 4),
+                NSRect(x: 4.5, y: 11, width: 2, height: 2)
+            ] {
+                NSBezierPath(ovalIn: crater).fill()
+            }
             return true
         }
         image.isTemplate = true
