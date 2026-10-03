@@ -8,10 +8,10 @@ Miruun 是原生 macOS 菜单栏小工具，面向这样的工作流：在 Codex
 
 ## 使用
 
-1. 将打包后的 `Miruun.app` 放到固定位置并打开，设置窗口会自动显示。选择 Codex 实际使用的数据目录，通常为 `~/.codex`。
-2. 勾选“启用后台连续性守护”。可选择“打开 Miruun 时自动打开 Codex”，并从 Finder 将 `Miruun.app` 拖入 Dock，以它作为日常启动入口。也可选择“登录 Mac 时启动 Miruun”；登录项启动仍保持静默。
+1. 将打包后的 `Miruun.app` 放到固定位置并打开，点击菜单栏土星图标可显示深色浮窗。在“设置”中选择 Codex 实际使用的数据目录，通常为 `~/.codex`。
+2. 返回概览，将“Miruun”设为“已启用”。可将“自动打开”设为“已开启”，并从 Finder 将 `Miruun.app` 拖入 Dock，以它作为日常启动入口。设置中也可选择“登录 Mac 时启动 Miruun”；登录项启动仍保持静默。
 3. 在 CC Switch 配好 CLIProxyAPI 的本地 Responses 入口与代理 API key，由代理管理账号 B。支持 Key 已保存在 Codex 文件认证中，或由当前 custom provider 的 `experimental_bearer_token` 提供。
-4. 正常退出 Codex GUI 及其他 Codex 后端，再通过 Miruun 的菜单或设置按钮“打开 Codex”。Miruun 重新检查配置，按需备份配置与认证、接入已有代理 Key，准备完成后启动 Codex，使用所选数据目录；打开任意原生 `openai` 历史继续。
+4. 正常退出 Codex GUI 及其他 Codex 后端，再点击浮窗概览中的“打开 Codex”或顶部对应快捷图标。Miruun 重新检查配置，按需备份配置与认证、接入已有代理 Key，准备完成后启动 Codex，使用所选数据目录；打开任意原生 `openai` 历史继续。
 5. 首次实际使用时，检查多个原对话的上下文和同次代理请求的上游账号。成功响应或模型名称不能单独证明请求由账号 B 处理。
 6. 停用 CC Switch + CLIProxyAPI、切回账号 A 时，先恢复官方 `openai` 入口及文件 ChatGPT/OAuth 登录，再退出 Codex 并通过 Miruun 打开。守护会补齐缺失的 `custom` 历史接入并移除自己管理的本机地址，然后启动 Codex，回到原对话。
 
@@ -21,7 +21,9 @@ Miruun 是原生 macOS 菜单栏小工具，面向这样的工作流：在 Codex
 
 桌面版启动会合并登录 shell 环境。“打开 Codex”在配置就绪后预检 shell 使用的 `CODEX_HOME`，仅获取该变量；固定目录覆盖、无法确认或 shell 执行失败时停止启动，原始输出不显示。预检后再次检查配置和客户端。两次采样至少间隔两秒，慢检查不会触发紧接着的补采样。按父进程、工作目录或命令内容分支的 shell 配置不在支持保证内，详见验证记录。
 
-勾选自动打开且守护启用后，手动双击、执行 `open "/完整路径/Miruun.app"` 或再次打开运行中的 Miruun，直接进入准备与启动流程；出错时显示设置窗口。未勾选或守护暂停时，手动打开仍显示设置，启用守护后可使用“打开 Codex”按钮。关闭设置窗口仅隐藏界面，可以从菜单栏“设置与状态…”再次打开。直接使用原 Codex 图标启动不经过 Miruun，无法保证配置先准备完成；已经运行的对话不会热切换，需要正常退出后重新打开。
+浮窗概览显示守护、Codex 启动和自动打开三行实际状态。顶部八个快捷图标依次用于暂停或启用守护、概览、完整状态、打开 Codex、配置备份、自动打开、设置和登录项；图标提示说明其作用。设置子页包含数据目录、配置备份和登录项，底部“返回”回到概览。状态子页可滚动查看并选择复制完整文字。
+
+自动打开已开启且守护启用后，手动双击、执行 `open "/完整路径/Miruun.app"` 或再次打开运行中的 Miruun，直接进入准备与启动流程；启动出错时打开完整状态子页。自动打开关闭或守护暂停时，手动打开显示浮窗，启用守护后可使用“打开 Codex”。再次点击土星图标、按 Esc 或切到其他应用仅收起界面，不暂停守护，也不取消待启动请求；后台检查更新状态时不会反复弹出浮窗。`⌘,` 打开设置，`⌘Q` 或底部“退出”正常结束 Miruun，并等待当前配置检查完成。直接使用原 Codex 图标启动不经过 Miruun，无法保证配置先准备完成；已经运行的对话不会热切换，需要正常退出后重新打开。
 
 ## 配置契约
 
@@ -57,7 +59,7 @@ bash scripts/build-app.sh --no-reveal
 
 | 路径 | 职责 |
 | --- | --- |
-| `Sources/Miruun` | 菜单栏、设置、后台调度、系统登录项 |
+| `Sources/Miruun` | 菜单栏浮窗、设置与状态、后台调度、系统登录项 |
 | `Sources/BridgeEngine/ContinuityGuard.swift` | 配置判定、稳定采样、备份及原子调整 |
 | `Sources/BridgeEngine/ProviderCatalog.swift` | 复用保守的 TOML 解析与配置校验 |
 | `Sources/MiruunEngine`、其余 BridgeEngine / BridgeCore / CSQLite | 初始化时保留的单次修复引擎与协议；当前 GUI 不调用，不是后台批量迁移入口 |
@@ -65,4 +67,4 @@ bash scripts/build-app.sh --no-reveal
 
 应用使用 Swift、AppKit、Foundation、CryptoKit、ServiceManagement 和系统 SQLite3，没有第三方 Swift 包或 Python 运行依赖。旧单对话 UI 已被后台守护替代，旧 helper 不具备原 GUI 的持久未决保护，不应自行调用它执行真实切换。历史备份与未决记录不会自动删除。
 
-[产品说明](docs/product.md)记录当前范围；[代码分析](docs/analysis.md)记录初始化与新方向的依据。图标母版尚未提供，菜单栏使用系统符号；Developer ID 签名、公证和洁净机器验收尚未完成。
+[产品说明](docs/product.md)记录当前范围；[代码分析](docs/analysis.md)记录初始化与新方向的依据。菜单栏使用绘制的土星图标；应用图标母版、Developer ID 签名、公证和洁净机器验收尚未完成。
