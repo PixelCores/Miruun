@@ -1,8 +1,37 @@
 # Miruun 验证记录
 
+## 未发布：官方登录恢复 custom 历史
+
+日期：2026 年 10 月 3 日。基于 `main@caa3d27539f9d21823392e551d42dde0824f5802`；本次不调整应用版本号。
+
+修复停用 CC Switch / CLIProxyAPI、回到官方登录后，历史仍引用 `custom` 而当前配置已删除该定义导致的 `Model provider \`custom\` not found`。仅在当前原生 `openai` 配置和文件 OAuth 认证下补齐缺失定义；已有非管理定义保持原样。管理 alias 随后续本机代理接入同步地址，OAuth 回切时移除地址，不读取或改写真实历史。
+
+| 验证 | 结果 |
+| --- | --- |
+| 全量 XCTest | 115 项通过，0 失败（BridgeEngine 102、BridgeCore 13） |
+| 连续性守护 | 36 项通过；新增 9 项，调整原 OAuth 测试，全部使用临时合成数据 |
+| Release 与打包 | Miruun / MiruunEngine 成功，日志无 warning 或 error；plist 校验通过 |
+| 独立代码复核 | 路由、认证、管理块归属与既有写入事务未发现未解决问题 |
+| 实际 Codex 隔离复现 | `codex-cli 0.159.2` 创建 custom 对话后删除定义，无 provider/model 覆盖的冷恢复精确复现原报错 |
+| 兼容定义与往返 | 合成 OAuth + 无 base_url 的 alias 恢复同一 ID/custom；再切到新 localhost mock 入口，同一对话继续并重放历史输入与回复 |
+
+新增回归覆盖 OAuth 首次补齐及幂等、认证字节与 inode 保留、备份、LF/CRLF 与末尾换行、根 API 入口及两类选中代理认证的 alias 同步、OAuth 回切清理两处地址、既有非管理普通/inline 定义保留、管理块篡改与注释伪表头拒绝、sealed/畸形/超限配置、活动客户端及提交前配置冲突。首次测试发现 Swift 字符串换行判断在 CRLF 下多插入空行；按 UTF-8 换行字节修正后，全量通过。
+
+构建命令：
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer bash scripts/build-app.sh --no-reveal
+```
+
+本机产物：`dist/20261003-113051-69777/Miruun.app`。日志：`/private/tmp/miruun-custom-provider-build.log`。未安装或启动该产物，未修改真实 Codex 配置、认证或会话。
+
+独立后端验证脚本为 `/private/tmp/miruun-custom-alias-contract.py`；汇总、完整 RPC 和 mock HTTP 请求保存在 `/private/tmp/miruun-codex-contract-8sz3bfn9/`。所有 `thread/resume` 只传 thread ID 和 `excludeTurns`，没有指定 provider/model。后端使用隔离 HOME/CODEX_HOME、合成认证和历史；沙盒禁止访问 `/Users` 和外网，仅允许两个临时 localhost 端口。这些临时文件不是发布依赖。
+
+边界：**OAuth 冷恢复成功不代表真实账号 A 已完成官方续聊。** 合成 OAuth 的实际推理在外网隔离下停于 `workspace routing discovery failed`；真实账号、官方响应、GUI 续写、加密/压缩上下文与 WebSocket 仍未验证。`thread/list` 默认仍按当前 provider 筛选，`modelProviders = []` 才包含所有 provider；本修复不改变 GUI 各列表的筛选方式，也不将历史 provider 改成 `openai`。Keychain、外部认证和配置覆盖继续遵循现有支持边界。
+
 ## 0.4.1 代理认证接入与启动修复
 
-日期：2026 年 10 月 2 日。以下为当前版本证据；后面的 0.4.0、0.3.1 为历史记录。
+日期：2026 年 10 月 2 日。以下为 0.4.1 当日证据；后面的 0.4.0、0.3.1 为更早记录。
 
 | 验证 | 当前结果 |
 | --- | --- |

@@ -106,7 +106,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         let title = NSTextField(labelWithString: "换个账号，继续原来的工作")
         title.font = .systemFont(ofSize: 23, weight: .semibold)
         root.addArrangedSubview(title)
-        addText("一次启用，后台维护 Codex 的本地代理配置。适用于同一数据目录中由官方 openai 创建的全部对话，无须逐条选择。", to: root)
+        addText("一次启用，后台维护 Codex 的接入配置。支持原生 openai 历史；回到官方登录时补齐缺失的 custom 接入，保留原对话。", to: root)
         addText("Miruun 复用 CC Switch 已配置的本机代理 Key，备份配置与认证后，为 Codex 设置 API Key 接入。账号由 CLIProxyAPI 管理，对话历史保持原样。", to: root)
 
         root.addArrangedSubview(NSTextField(labelWithString: "Codex 数据目录"))

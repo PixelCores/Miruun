@@ -41,6 +41,16 @@ final class ContinuityGuardTests: XCTestCase {
             .replacingOccurrences(of: "requires_openai_auth = true", with: "requires_openai_auth = false")
     }
 
+    private func managedCustom(endpoint: String? = nil) -> String {
+        let definition = "[model_providers.custom] # miruun-managed-custom-provider\nname = \"OpenAI\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n"
+        return definition + (endpoint.map { "base_url = \"\($0)\"\n" } ?? "")
+    }
+
+    private func customDefinition(_ text: String) throws -> CatalogTable {
+        let root = try CatalogTOML.parse(text)
+        return try XCTUnwrap(root.entries["model_providers"].tableValue?.entries["custom"].tableValue)
+    }
+
     private func receipt(_ status: ContinuityStatus) throws -> [String: Bool] {
         let directory = URL(fileURLWithPath: try XCTUnwrap(status.backupPath)).deletingLastPathComponent()
         let data = try Data(contentsOf: directory.appendingPathComponent("receipt.json"))
@@ -157,16 +167,56 @@ final class ContinuityGuardTests: XCTestCase {
         XCTAssertEqual(guarder.check().phase, .ready)
     }
 
-    func testOAuthWaitsWithoutChangingConfigurationOrCredentials() throws {
-        try writeConfig("model_provider = \"openai\"\nmodel = \"original-model\"\n")
+    func testOAuthRepairsMissingCustomAfterStableSamplesWithoutChangingCredentials() throws {
+        let text = "model_provider = \"openai\"\nmodel = \"original-model\"\n"
+        try writeConfig(text)
         try writeAuth(["auth_mode": "chatgpt", "OPENAI_API_KEY": NSNull(), "tokens": ["access_token": "SYNTHETIC_OAUTH"]])
         let original = try Data(contentsOf: config), authBefore = try Data(contentsOf: auth)
+        let authInode = try FileManager.default.attributesOfItem(atPath: auth.path)[.systemFileNumber] as? NSNumber
         let guarder = ContinuityGuard(home: home, backupDirectory: backups, clientsAreRunning: { false })
         XCTAssertEqual(guarder.check().phase, .waiting)
-        XCTAssertEqual(guarder.check().phase, .waiting)
         XCTAssertEqual(try Data(contentsOf: config), original)
-        XCTAssertEqual(try Data(contentsOf: auth), authBefore)
         XCTAssertFalse(FileManager.default.fileExists(atPath: backups.path))
+        let updated = guarder.check()
+        XCTAssertEqual(updated.phase, .updated)
+        XCTAssertEqual(try String(contentsOf: config, encoding: .utf8), text + managedCustom())
+        let definition = try customDefinition(String(contentsOf: config, encoding: .utf8))
+        XCTAssertEqual(Set(definition.entries.keys), ["name", "wire_api", "requires_openai_auth"])
+        XCTAssertEqual(definition.entries["name"].stringValue, "OpenAI")
+        XCTAssertEqual(definition.entries["wire_api"].stringValue, "responses")
+        XCTAssertEqual(definition.entries["requires_openai_auth"].boolValue, true)
+        XCTAssertNil(definition.entries["base_url"])
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: XCTUnwrap(updated.backupPath))), original)
+        XCTAssertEqual(try Data(contentsOf: auth), authBefore)
+        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: auth.path)[.systemFileNumber] as? NSNumber, authInode)
+        XCTAssertEqual(try receipt(updated), ["auth_existed": true, "config_written": true, "auth_written": false, "complete": true])
+        XCTAssertEqual(guarder.check().phase, .ready)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: backups.path).count, 1)
+        XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: home.path)), ["config.toml", "auth.json"])
+        XCTAssertTrue(try pendingFiles().isEmpty)
+    }
+
+    func testOAuthAliasInsertionPreservesOtherTablesAndLineEndings() throws {
+        try writeAuth(["auth_mode": "chatgpt", "tokens": ["access_token": "SYNTHETIC_OAUTH"]])
+        let authBefore = try Data(contentsOf: auth)
+        for newline in ["\n", "\r\n"] {
+            for trailingNewline in [false, true] {
+                let text = "model = \"original-model\"\n[model_providers.other]\nname = \"Preserved\"\nbase_url = \"https://example.test/v1\""
+                    .replacingOccurrences(of: "\n", with: newline) + (trailingNewline ? newline : "")
+                try writeConfig(text)
+                let guarder = ContinuityGuard(home: home, backupDirectory: backups, clientsAreRunning: { false })
+                XCTAssertEqual(guarder.check().phase, .waiting)
+                XCTAssertEqual(guarder.check().phase, .updated)
+                let output = try String(contentsOf: config, encoding: .utf8)
+                XCTAssertEqual(output, text + (trailingNewline ? "" : newline) + managedCustom().replacingOccurrences(of: "\n", with: newline))
+                let parsed = try CatalogTOML.parse(output)
+                XCTAssertNil(parsed.entries["model_provider"])
+                XCTAssertEqual(parsed.entries["model"].stringValue, "original-model")
+                XCTAssertNil(try customDefinition(output).entries["base_url"])
+                XCTAssertEqual(try Data(contentsOf: auth), authBefore)
+                XCTAssertEqual(guarder.check().phase, .ready)
+            }
+        }
     }
 
     func testOAuthReturnRemovesOnlyOwnedEndpointAfterTwoStableSamples() throws {
@@ -186,9 +236,183 @@ final class ContinuityGuardTests: XCTestCase {
         XCTAssertNil(parsed.entries["openai_base_url"])
         XCTAssertEqual(parsed.entries["model_provider"].stringValue, "openai")
         XCTAssertEqual(parsed.entries["model"].stringValue, "original-model")
+        XCTAssertNil(try customDefinition(String(contentsOf: config, encoding: .utf8)).entries["base_url"])
         XCTAssertEqual(try Data(contentsOf: auth), authBefore)
-        XCTAssertEqual(guarder.check().phase, .waiting)
+        XCTAssertEqual(guarder.check().phase, .ready)
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: backups.path).count, 2)
+    }
+
+    func testManagedCustomAliasTracksNativeProxyAndOAuthRoundTrip() throws {
+        let endpoint = "http://localhost:8317/v1"
+        let text = "model_provider = \"openai\"\nmodel = \"original-model\"\nopenai_base_url = \"\(endpoint)\" # miruun-managed-openai-base-url\n" + managedCustom()
+        try writeConfig(text)
+        let apiAuth = try Data(contentsOf: auth)
+        let guarder = ContinuityGuard(home: home, backupDirectory: backups, clientsAreRunning: { false })
+        XCTAssertEqual(guarder.check().phase, .waiting)
+        XCTAssertEqual(try String(contentsOf: config, encoding: .utf8), text)
+        XCTAssertEqual(guarder.check().phase, .updated)
+        let routed = try String(contentsOf: config, encoding: .utf8)
+        XCTAssertEqual(try customDefinition(routed).entries["base_url"].stringValue, endpoint)
+        XCTAssertEqual(try Data(contentsOf: auth), apiAuth)
+        XCTAssertEqual(guarder.check().phase, .ready)
+
+        let nextEndpoint = "http://127.0.0.1:8318/nested/v1"
+        try writeConfig(routed.replacingOccurrences(of: "openai_base_url = \"\(endpoint)\"", with: "openai_base_url = \"\(nextEndpoint)\""))
+        XCTAssertEqual(guarder.check().phase, .waiting)
+        XCTAssertEqual(guarder.check().phase, .updated)
+        let rerouted = try Data(contentsOf: config)
+        XCTAssertEqual(try customDefinition(String(decoding: rerouted, as: UTF8.self)).entries["base_url"].stringValue, nextEndpoint)
+
+        try writeAuth(["auth_mode": "chatgpt", "tokens": ["access_token": "SYNTHETIC_OAUTH"]])
+        let oauthAuth = try Data(contentsOf: auth)
+        XCTAssertEqual(guarder.check().phase, .waiting)
+        XCTAssertEqual(try Data(contentsOf: config), rerouted)
+        let restored = guarder.check()
+        XCTAssertEqual(restored.phase, .updated)
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: XCTUnwrap(restored.backupPath))), rerouted)
+        let restoredText = try String(contentsOf: config, encoding: .utf8)
+        let root = try CatalogTOML.parse(restoredText)
+        XCTAssertNil(root.entries["openai_base_url"])
+        XCTAssertEqual(root.entries["model_provider"].stringValue, "openai")
+        XCTAssertEqual(root.entries["model"].stringValue, "original-model")
+        XCTAssertNil(try customDefinition(restoredText).entries["base_url"])
+        XCTAssertEqual(try Data(contentsOf: auth), oauthAuth)
+        XCTAssertEqual(guarder.check().phase, .ready)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: backups.path).count, 3)
+    }
+
+    func testSelectedProxySynchronizesExistingManagedCustomAlias() throws {
+        for inline in [false, true] {
+            try writeAuth(["auth_mode": "apikey", "OPENAI_API_KEY": key])
+            let original = (inline ? inlineProvider() : provider()) + managedCustom()
+            try writeConfig(original)
+            let guarder = ContinuityGuard(home: home, backupDirectory: backups, clientsAreRunning: { false })
+            XCTAssertEqual(guarder.check().phase, .waiting)
+            let updated = guarder.check()
+            XCTAssertEqual(updated.phase, .updated)
+            let output = try String(contentsOf: config, encoding: .utf8)
+            let parsed = try CatalogTOML.parse(output)
+            XCTAssertEqual(parsed.entries["model_provider"].stringValue, "openai")
+            XCTAssertEqual(parsed.entries["model"].stringValue, "original-model")
+            XCTAssertEqual(parsed.entries["openai_base_url"].stringValue, "http://127.0.0.1:8317/v1")
+            XCTAssertEqual(try customDefinition(output).entries["base_url"].stringValue, "http://127.0.0.1:8317/v1")
+            let credentials = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: auth)) as? [String: String])
+            XCTAssertEqual(credentials["OPENAI_API_KEY"], inline ? "SYNTHETIC_INLINE_KEY" : key)
+            XCTAssertEqual(try receipt(updated)["auth_written"], inline)
+            XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: XCTUnwrap(updated.backupPath))), Data(original.utf8))
+            XCTAssertEqual(guarder.check().phase, .ready)
+        }
+    }
+
+    func testExistingUnmanagedCustomDefinitionsArePreserved() throws {
+        let definitions = [
+            "[model_providers.custom]\nname = \"Existing provider\"\nbase_url = \"https://example.test/v1\"\nenv_key = \"SYNTHETIC_ENV\"\n",
+            "model_providers = { custom = { name = 'Existing provider', base_url = 'https://example.test/v1', env_key = 'SYNTHETIC_ENV' } }\n"
+        ]
+        for api in [false, true] {
+            try writeAuth(api ? ["auth_mode": "apikey", "OPENAI_API_KEY": key] : ["auth_mode": "chatgpt", "tokens": ["access_token": "SYNTHETIC_OAUTH"]])
+            let authBefore = try Data(contentsOf: auth)
+            for definition in definitions {
+                let text = "model_provider = \"openai\"\n" + (api ? "openai_base_url = \"http://localhost:8317/v1\"\n" : "") + definition
+                try writeConfig(text)
+                let guarder = ContinuityGuard(home: home, backupDirectory: backups, clientsAreRunning: { false })
+                XCTAssertEqual(guarder.check().phase, .ready)
+                XCTAssertEqual(guarder.check().phase, .ready)
+                XCTAssertEqual(try String(contentsOf: config, encoding: .utf8), text)
+                XCTAssertEqual(try Data(contentsOf: auth), authBefore)
+                XCTAssertFalse(FileManager.default.fileExists(atPath: backups.path))
+            }
+        }
+    }
+
+    func testEditedManagedCustomDefinitionsBlockWithoutChangingEitherFile() throws {
+        try writeAuth(["auth_mode": "chatgpt", "tokens": ["access_token": "SYNTHETIC_OAUTH"]])
+        let authBefore = try Data(contentsOf: auth)
+        let definition = managedCustom()
+        let edited = [
+            definition.replacingOccurrences(of: "# miruun-managed-custom-provider", with: "# miruun-managed-custom-provider changed"),
+            definition.replacingOccurrences(of: "name = \"OpenAI\"", with: "name = \"Edited\""),
+            definition.replacingOccurrences(of: "requires_openai_auth = true", with: "requires_openai_auth = false"),
+            definition.replacingOccurrences(of: "requires_openai_auth = true", with: "requires_openai_auth = true # edited"),
+            definition + "env_key = \"SYNTHETIC_ENV\"\n",
+            definition + "experimental_bearer_token = \"SYNTHETIC_TOKEN\"\n",
+            definition + "[model_providers.custom.http_headers]\nAuthorization = \"SYNTHETIC_TOKEN\"\n",
+            managedCustom(endpoint: "https://example.test/v1"),
+            definition + "base_url = 42\n",
+            "# miruun-managed-custom-provider\n" + definition,
+            "# miruun-managed-custom-provider\n"
+        ]
+        for text in edited {
+            try assertBlocked("model_provider = \"openai\"\n" + text)
+            XCTAssertEqual(try Data(contentsOf: auth), authBefore)
+        }
+    }
+
+    func testCommentedManagedHeaderCannotOwnAnUnmarkedCustomProvider() throws {
+        let spoof = "model_provider = \"openai\"\nopenai_base_url = \"http://localhost:8317/v1\"\n[other]\n# " + managedCustom()
+            + managedCustom().replacingOccurrences(of: " # miruun-managed-custom-provider", with: "")
+        let parsedCustom = try customDefinition(spoof)
+        XCTAssertNil(parsedCustom.entries["base_url"])
+        let authBefore = try Data(contentsOf: auth)
+        try assertBlocked(spoof)
+        XCTAssertEqual(try Data(contentsOf: auth), authBefore)
+    }
+
+    func testOAuthAliasRejectsSealedMalformedAndOversizedConfigurations() throws {
+        try writeAuth(["auth_mode": "chatgpt", "tokens": ["access_token": "SYNTHETIC_OAUTH"]])
+        let authBefore = try Data(contentsOf: auth)
+        for value in ["{}", "{ other = { name = 'Existing' } }", "[]", "42", "'invalid'"] {
+            try assertBlocked("model_provider = \"openai\"\nmodel_providers = \(value)\n")
+        }
+        for value in ["[]", "42", "'invalid'"] {
+            try assertBlocked("model_provider = \"openai\"\nmodel_providers = { custom = \(value) }\n")
+            try assertBlocked("model_provider = \"openai\"\n[model_providers]\ncustom = \(value)\n")
+        }
+        try assertBlocked("#" + String(repeating: " ", count: 1_024 * 1_024 - 2) + "\n")
+        XCTAssertEqual(try Data(contentsOf: auth), authBefore)
+    }
+
+    func testOAuthAliasRepairWaitsForClientsAndRestartsStableSampling() throws {
+        let text = "model_provider = \"openai\"\n"
+        try writeConfig(text)
+        try writeAuth(["auth_mode": "chatgpt", "tokens": ["access_token": "SYNTHETIC_OAUTH"]])
+        let authBefore = try Data(contentsOf: auth)
+        var running = false
+        let guarder = ContinuityGuard(home: home, backupDirectory: backups, clientsAreRunning: { running })
+        XCTAssertEqual(guarder.check().phase, .waiting)
+        running = true
+        let waiting = guarder.check()
+        XCTAssertEqual(waiting.phase, .waiting)
+        XCTAssertTrue(waiting.message.contains("退出 Codex/ChatGPT"))
+        XCTAssertEqual(try String(contentsOf: config, encoding: .utf8), text)
+        XCTAssertEqual(try Data(contentsOf: auth), authBefore)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: backups.path))
+        running = false
+        XCTAssertEqual(guarder.check().phase, .waiting)
+        XCTAssertEqual(guarder.check().phase, .updated)
+        XCTAssertEqual(guarder.check().phase, .ready)
+    }
+
+    func testOAuthAliasRepairDoesNotOverwriteConfigChangedBeforeCommit() throws {
+        let text = "model_provider = \"openai\"\n"
+        let external = text + "# external change\n"
+        try writeConfig(text)
+        try writeAuth(["auth_mode": "chatgpt", "tokens": ["access_token": "SYNTHETIC_OAUTH"]])
+        let authBefore = try Data(contentsOf: auth)
+        var calls = 0
+        let guarder = ContinuityGuard(home: home, backupDirectory: backups, clientsAreRunning: {
+            calls += 1
+            if calls == 3 { try self.writeConfig(external) }
+            return false
+        })
+        XCTAssertEqual(guarder.check().phase, .waiting)
+        let status = guarder.check()
+        XCTAssertEqual(status.phase, .blocked)
+        XCTAssertTrue(status.message.contains("变化"))
+        XCTAssertEqual(try String(contentsOf: config, encoding: .utf8), external)
+        XCTAssertEqual(try Data(contentsOf: auth), authBefore)
+        XCTAssertEqual(try receipt(status), ["auth_existed": true, "config_written": false, "auth_written": false, "complete": false])
+        XCTAssertTrue(try pendingFiles().isEmpty)
     }
 
     func testOAuthDoesNotRemoveUnownedOrModifiedEndpoints() throws {
@@ -568,6 +792,16 @@ final class ContinuityGuardTests: XCTestCase {
 }
 
 private extension Optional where Wrapped == CatalogValue {
+    var tableValue: CatalogTable? {
+        guard case let .table(value)? = self else { return nil }
+        return value
+    }
+
+    var boolValue: Bool? {
+        guard case let .bool(value)? = self else { return nil }
+        return value
+    }
+
     var stringValue: String? {
         guard case let .string(value)? = self else { return nil }
         return value
