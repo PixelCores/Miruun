@@ -78,6 +78,26 @@ public final class ContinuityGuard {
         self.clientsAreRunning = clientsAreRunning
     }
 
+    /// Use on the same two-second schedule as check(). A fresh launch must also
+    /// wait for clients to exit when the configuration needs no changes.
+    public func checkForLaunch() -> ContinuityStatus {
+        do {
+            try requireClosed()
+            let sampled = previous
+            let status = check()
+            if status.phase == .ready, sampled != previous {
+                return ContinuityStatus(phase: .waiting, message: "当前接入配置已识别，等待下一次相同采样后打开 Codex。")
+            }
+            return status
+        } catch Failure.clientsActive {
+            previous = nil
+            return ContinuityStatus(phase: .waiting, message: Failure.clientsActive.message)
+        } catch {
+            previous = nil
+            return ContinuityStatus(phase: .blocked, message: Failure.clientsUnknown.message)
+        }
+    }
+
     public func check() -> ContinuityStatus {
         if let blockedStatus { return blockedStatus }
         backupPath = nil
