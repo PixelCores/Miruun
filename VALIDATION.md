@@ -23,6 +23,10 @@
 
 后续按用户要求，将菜单栏与浮窗的土星统一换为月球：共用 `moonImage` 矢量绘图，以 alpha 层次呈现月面凹坑；菜单栏为 18 × 18 pt，浮窗为 28 × 28 pt。仅修改图标绘制、两处调用和对应文案，没有新增资源或实体。Release 重编译与 plist 检查通过，实际运行 `dist/20261003-212845-moon/Miruun.app`，浮窗月球显示正常；原守护及自动打开偏好保持，当前就绪。截图为 `/private/tmp/miruun-moon-ui.png`，压缩包为 `/private/tmp/Miruun-glass-moon.zip`。本次纯图标修改未重复运行未受影响的核心 XCTest，前述 124 项证据保留；Release 日志为 `/private/tmp/miruun-moon-release.log`。
 
+2026 年 10 月 5 日，进一步将月面凹坑改为一大一小两枚猫爪印，四颗椭圆脚趾与三瓣肉垫沿斜向排列，沿用 `moonImage` 的模板透明度与菜单栏/浮窗共用绘图。主图案保留脚趾间隙和月缘留白，小图案作为辅助纹理。仅修改现有图标绘图与品牌说明。
+
+本次 Release 编译、plist 与压缩包检查通过，无 warning/error；同一源码另按 macOS 13 deployment target 编译，生成 18pt、28pt 和放大预览并检查可辨识度。最终应用 `dist/20261005-110714-paw-moon/Miruun.app` 已实际运行，浮窗月球中的猫爪显示正常；原守护启用与自动打开关闭保持，就绪且没有待启动请求。预览为 `/private/tmp/miruun-paw-logo-preview.png`，运行截图为 `/private/tmp/miruun-paw-moon-ui.png`，应用压缩包为 `/private/tmp/Miruun-paw-moon.zip`，Release 日志为 `/private/tmp/miruun-paw-moon-release.log`。纯图标修改未重复未受影响的核心 XCTest；未额外修改用户配置或发送真实回合。
+
 ## 已合并：参考图深色菜单栏浮窗
 
 日期：2026 年 10 月 3 日。沿用启动入口分支及 `main@1a43f2dae5fee5ce7d4fbebc60a9fe4872747d4d` 基线，源码版本未变。

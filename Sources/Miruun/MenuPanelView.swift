@@ -121,17 +121,57 @@ final class MenuPanelView: NSView {
 
             NSColor.white.setFill()
             NSBezierPath(ovalIn: NSRect(x: 1, y: 1, width: 22, height: 22)).fill()
-            // Alpha shading keeps the lunar craters visible in both template tints.
-            NSGraphicsContext.current?.compositingOperation = .destinationOut
-            NSColor.white.withAlphaComponent(0.28).setFill()
-            for crater in [
-                NSRect(x: 6, y: 5, width: 4, height: 4),
-                NSRect(x: 13, y: 6, width: 3, height: 3),
-                NSRect(x: 8, y: 12, width: 5, height: 4),
-                NSRect(x: 15, y: 14, width: 3, height: 4),
-                NSRect(x: 4.5, y: 11, width: 2, height: 2)
+            // Paw-shaped craters use alpha so the system can tint the menu icon.
+            let paw = NSBezierPath()
+            for toe in [
+                NSRect(x: -4.9, y: -3.1, width: 2.2, height: 2.8),
+                NSRect(x: -2.7, y: -5.2, width: 2.2, height: 2.8),
+                NSRect(x: 0.5, y: -5.2, width: 2.2, height: 2.8),
+                NSRect(x: 2.7, y: -3.1, width: 2.2, height: 2.8)
             ] {
-                NSBezierPath(ovalIn: crater).fill()
+                paw.appendOval(in: toe)
+            }
+            paw.move(to: NSPoint(x: -3.8, y: 3.4))
+            paw.curve(to: NSPoint(x: -3.2, y: 0.8),
+                      controlPoint1: NSPoint(x: -4.4, y: 2.7),
+                      controlPoint2: NSPoint(x: -4, y: 1.4))
+            paw.curve(to: NSPoint(x: -1.1, y: -0.2),
+                      controlPoint1: NSPoint(x: -2.7, y: 0.3),
+                      controlPoint2: NSPoint(x: -2, y: -0.7))
+            paw.curve(to: NSPoint(x: 1.1, y: -0.2),
+                      controlPoint1: NSPoint(x: -0.4, y: 0.9),
+                      controlPoint2: NSPoint(x: 0.4, y: 0.9))
+            paw.curve(to: NSPoint(x: 3.2, y: 0.8),
+                      controlPoint1: NSPoint(x: 2, y: -0.7),
+                      controlPoint2: NSPoint(x: 2.7, y: 0.3))
+            paw.curve(to: NSPoint(x: 3.8, y: 3.4),
+                      controlPoint1: NSPoint(x: 4, y: 1.4),
+                      controlPoint2: NSPoint(x: 4.4, y: 2.7))
+            paw.curve(to: NSPoint(x: 1.8, y: 4.8),
+                      controlPoint1: NSPoint(x: 3.1, y: 4.6),
+                      controlPoint2: NSPoint(x: 2.6, y: 5.2))
+            paw.curve(to: NSPoint(x: -1.8, y: 4.8),
+                      controlPoint1: NSPoint(x: 0.7, y: 3.3),
+                      controlPoint2: NSPoint(x: -0.7, y: 3.3))
+            paw.curve(to: NSPoint(x: -3.8, y: 3.4),
+                      controlPoint1: NSPoint(x: -2.6, y: 5.2),
+                      controlPoint2: NSPoint(x: -3.1, y: 4.6))
+            paw.close()
+
+            NSGraphicsContext.current?.compositingOperation = .destinationOut
+            NSColor.white.withAlphaComponent(0.42).setFill()
+            for (center, scale, angle) in [
+                (NSPoint(x: 9.6, y: 13.7), CGFloat(1), CGFloat(-18)),
+                (NSPoint(x: 16.7, y: 7.3), CGFloat(0.55), CGFloat(18))
+            ] {
+                NSGraphicsContext.saveGraphicsState()
+                let placement = NSAffineTransform()
+                placement.translateX(by: center.x, yBy: center.y)
+                placement.rotate(byDegrees: angle)
+                placement.scale(by: scale)
+                placement.concat()
+                paw.fill()
+                NSGraphicsContext.restoreGraphicsState()
             }
             return true
         }
