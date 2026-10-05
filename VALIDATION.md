@@ -1,6 +1,25 @@
 # Miruun 验证记录
 
-## 未发布：半透明玻璃与核心操作简化
+## 未发布：半透明玻璃、守护开关与配置目录发现
+
+日期：2026 年 10 月 5 日。沿用 `main@d78f7fa78c4f4297c4cc99c0e2bc86eeab1891cd` 与 `codex/glass-core-panel` 分支；源码版本未变。
+
+当前首页仅保留 Miruun 标题、实际状态入口、原生 `NSSwitch` 连续性守护和手动“打开 Codex”；移除副标题、自动打开选项及首次启动/reopen 的自动请求，清理旧 `autoOpenCodex` 偏好。原版月球与 332 × 350 pt 玻璃浮窗保留。
+
+设置显示自动发现的 Codex/Claude 全局配置目录。发现复用 worker 与有界登录 shell，只获取两个目录变量并检查文件元数据；默认结果不永久固定，非默认旧路径迁移为手选。显式无效路径、链接和 shell 失败可观察；目录未确定前禁用守护和启动，维护中不替换目录，退出阻止发现回调再次开启守护。Claude 仅发现并展示目录。
+
+| 验证 | 结果 |
+| --- | --- |
+| 最终 XCTest | 136 项通过，0 失败（BridgeEngine 123、BridgeCore 13），日志 `/private/tmp/miruun-directory-switch-final-tests.log` |
+| 目录回归 | 新增 12 项合成测试，覆盖默认/缺失/自定义路径、shell 合并与 unset、无效覆盖不回退、链接、手动优先及畸形记录；独立复核发现的分隔符截断问题已修复并补回归 |
+| Release 与打包 | 最终重编译通过，无 warning/error；plist、压缩包内容与可执行权限检查通过，日志 `/private/tmp/miruun-directory-switch-final-release.log` |
+| 实际 GUI | 首页无副标题和自动打开选项，守护为原生开关；暂停/启用对应状态及手动启动按钮一致，暂停后自动查找正常，目录面板取消保留原目录 |
+| 最终包 | 实际运行 `dist/20261005-120603-directory-switch/Miruun.app`，启动只显示面板，没有待启动请求；发现 `/Users/pixelkernel/.codex` 和 `/Users/pixelkernel/.claude`，守护启用、配置就绪及登录项已选状态保持 |
+| 独立复核 | 所选 Codex URL 同时用于守护与手动启动；删除自动请求后稳定采样和 UUID 取消链保留，未发现未解决问题 |
+
+截图为 `/private/tmp/miruun-directory-switch-overview-ui.png` 与 `/private/tmp/miruun-directory-switch-settings-ui.png`，应用包为 `/private/tmp/Miruun-directory-switch.zip`。本次没有关闭当前 Codex、发送真实回合或读取历史数据库；没有更改登录项注册。真实客户端冷启动与其他系统版本仍未额外验收。
+
+### 初版玻璃界面验收
 
 日期：2026 年 10 月 3 日。基于已合并 PR #2 的 `main@d78f7fa78c4f4297c4cc99c0e2bc86eeab1891cd`，在独立工作树的 `codex/glass-core-panel` 分支实现；源码版本未变。
 

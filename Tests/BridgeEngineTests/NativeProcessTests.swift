@@ -39,6 +39,203 @@ final class NativeProcessTests: XCTestCase {
         return try NativeRPC(backend: executable(script), home: root, timeout: timeout)
     }
 
+    private func configurationShell(_ setup: String = "") throws -> URL {
+        try executable("""
+        test "$1" = '-ilc'
+        test "$CODEX_SHELL" = '1'
+        test "$DISABLE_AUTO_UPDATE" = 'true'
+        test "$ZSH_TMUX_AUTOSTARTED" = 'true'
+        test "$ZSH_TMUX_AUTOSTART" = 'false'
+        printf '%s\\n' 'SYNTHETIC_SHELL_BANNER'
+        \(setup)
+        exec /bin/sh -c "$2"
+        """)
+    }
+
+    private func configurationDirectory(_ name: String) throws -> URL {
+        let directory = root.appendingPathComponent(name)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
+    func testConfigurationDirectoriesUseExistingDefaultsWithoutReadingFiles() throws {
+        let codex = try configurationDirectory(".codex"), claude = try configurationDirectory(".claude")
+        let result = try NativeDiscovery.configurationDirectories(home: root, shell: configurationShell(), environment: [:])
+        XCTAssertEqual(result.codex.directory?.path, codex.path)
+        XCTAssertEqual(result.claude.directory?.path, claude.path)
+        XCTAssertEqual(result.codex.source, "默认目录")
+        XCTAssertEqual(result.claude.source, "默认目录")
+        XCTAssertNil(result.codex.error)
+        XCTAssertNil(result.claude.error)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: codex.path).isEmpty)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: claude.path).isEmpty)
+    }
+
+    func testConfigurationDirectoriesPreserveLiteralEnvironmentOverrides() throws {
+        let codex = try configurationDirectory("data ' $(ignored) `ignored` 中文")
+        let claude = try configurationDirectory("claude custom")
+        let result = try NativeDiscovery.configurationDirectories(home: root, shell: configurationShell(), environment: [
+            "CODEX_HOME": codex.path, "CLAUDE_CONFIG_DIR": claude.path
+        ])
+        XCTAssertEqual(result.codex.directory?.path, codex.path)
+        XCTAssertEqual(result.claude.directory?.path, claude.path)
+        XCTAssertEqual(result.codex.source, "CODEX_HOME")
+        XCTAssertEqual(result.claude.source, "CLAUDE_CONFIG_DIR")
+        XCTAssertNil(result.codex.error)
+        XCTAssertNil(result.claude.error)
+    }
+
+    func testConfigurationDirectoriesNeverFallBackFromInvalidExplicitOverrides() throws {
+        _ = try configurationDirectory(".codex")
+        let claude = try configurationDirectory(".claude")
+        let file = root.appendingPathComponent("regular-file")
+        try Data("SYNTHETIC_FILE".utf8).write(to: file)
+        let shell = try configurationShell()
+        for path in ["", "relative/path", root.appendingPathComponent("missing").path, file.path,
+                     root.path + "/.codex/../.codex", root.path + "/.codex/./", root.path + "/invalid\npath"] {
+            let result = try NativeDiscovery.configurationDirectories(home: root, shell: shell, environment: ["CODEX_HOME": path])
+            XCTAssertNil(result.codex.directory, path)
+            XCTAssertNotNil(result.codex.error, path)
+            XCTAssertEqual(result.codex.source, "CODEX_HOME")
+            XCTAssertEqual(result.claude.directory?.path, claude.path)
+        }
+        let result = try NativeDiscovery.configurationDirectories(home: root, shell: shell, environment: ["CLAUDE_CONFIG_DIR": file.path])
+        XCTAssertNil(result.claude.directory)
+        XCTAssertNotNil(result.claude.error)
+        XCTAssertEqual(result.claude.source, "CLAUDE_CONFIG_DIR")
+    }
+
+    func testConfigurationDirectoriesDoNotCreateMissingDefaults() throws {
+        let result = try NativeDiscovery.configurationDirectories(home: root, shell: configurationShell(), environment: [:])
+        XCTAssertNil(result.codex.directory)
+        XCTAssertNil(result.claude.directory)
+        XCTAssertNotNil(result.codex.error)
+        XCTAssertNotNil(result.claude.error)
+        XCTAssertEqual(result.codex.source, "默认目录")
+        XCTAssertEqual(result.claude.source, "默认目录")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(".codex").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(".claude").path))
+    }
+
+    func testConfigurationDirectoriesUseLoginShellOverridesBeforeInheritedValues() throws {
+        let inherited = try configurationDirectory("inherited")
+        let codex = try configurationDirectory("shell codex"), claude = try configurationDirectory("shell claude")
+        let shell = try configurationShell("""
+        export CODEX_HOME="$SYNTHETIC_CODEX"
+        export CLAUDE_CONFIG_DIR="$SYNTHETIC_CLAUDE"
+        """)
+        let result = try NativeDiscovery.configurationDirectories(home: root, shell: shell, environment: [
+            "CODEX_HOME": inherited.path, "CLAUDE_CONFIG_DIR": inherited.path,
+            "SYNTHETIC_CODEX": codex.path, "SYNTHETIC_CLAUDE": claude.path
+        ])
+        XCTAssertEqual(result.codex.directory?.path, codex.path)
+        XCTAssertEqual(result.claude.directory?.path, claude.path)
+        XCTAssertEqual(result.codex.source, "CODEX_HOME（登录 shell）")
+        XCTAssertEqual(result.claude.source, "CLAUDE_CONFIG_DIR（登录 shell）")
+    }
+
+    func testConfigurationDirectoriesMatchDesktopMergeForUnsetShellVariables() throws {
+        let codex = try configurationDirectory("inherited codex"), claude = try configurationDirectory("inherited claude")
+        let shell = try configurationShell("unset CODEX_HOME CLAUDE_CONFIG_DIR")
+        let result = try NativeDiscovery.configurationDirectories(home: root, shell: shell, environment: [
+            "CODEX_HOME": codex.path, "CLAUDE_CONFIG_DIR": claude.path
+        ])
+        XCTAssertEqual(result.codex.directory?.path, codex.path)
+        XCTAssertEqual(result.claude.directory?.path, claude.path)
+        XCTAssertEqual(result.codex.source, "CODEX_HOME")
+        XCTAssertEqual(result.claude.source, "CLAUDE_CONFIG_DIR")
+        let defaultCodex = try configurationDirectory(".codex"), defaultClaude = try configurationDirectory(".claude")
+        let defaults = try NativeDiscovery.configurationDirectories(home: root, shell: shell, environment: [:])
+        XCTAssertEqual(defaults.codex.directory?.path, defaultCodex.path)
+        XCTAssertEqual(defaults.claude.directory?.path, defaultClaude.path)
+    }
+
+    func testConfigurationDirectoriesRejectEmptyLoginShellOverrides() throws {
+        let directory = try configurationDirectory("inherited")
+        let shell = try configurationShell("export CODEX_HOME='' CLAUDE_CONFIG_DIR=''")
+        let result = try NativeDiscovery.configurationDirectories(home: root, shell: shell, environment: [
+            "CODEX_HOME": directory.path, "CLAUDE_CONFIG_DIR": directory.path
+        ])
+        XCTAssertNil(result.codex.directory)
+        XCTAssertNil(result.claude.directory)
+        XCTAssertNotNil(result.codex.error)
+        XCTAssertNotNil(result.claude.error)
+        XCTAssertEqual(result.codex.source, "CODEX_HOME（登录 shell）")
+        XCTAssertEqual(result.claude.source, "CLAUDE_CONFIG_DIR（登录 shell）")
+    }
+
+    func testConfigurationDirectoriesRejectSymbolicLinksWithoutResolvingAliases() throws {
+        let directory = try configurationDirectory("actual")
+        let link = root.appendingPathComponent("alias")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: directory)
+        let result = try NativeDiscovery.configurationDirectories(home: root, shell: configurationShell(), environment: [
+            "CODEX_HOME": link.path, "CLAUDE_CONFIG_DIR": link.appendingPathComponent("nested").path
+        ])
+        XCTAssertNil(result.codex.directory)
+        XCTAssertNil(result.claude.directory)
+        XCTAssertTrue(result.codex.error?.contains("符号链接") ?? false)
+        XCTAssertTrue(result.claude.error?.contains("符号链接") ?? false)
+    }
+
+    func testConfigurationDirectoriesPreferValidatedManualCodexOverride() throws {
+        let manual = try configurationDirectory("manual codex"), discovered = try configurationDirectory("discovered")
+        let shell = try configurationShell()
+        let environment = ["CODEX_HOME": discovered.path, "CLAUDE_CONFIG_DIR": discovered.path]
+        let result = try NativeDiscovery.configurationDirectories(home: root, codexOverride: manual.path, shell: shell, environment: environment)
+        XCTAssertEqual(result.codex.directory?.path, manual.path)
+        XCTAssertEqual(result.codex.source, "手动选择")
+        XCTAssertNil(result.codex.error)
+        XCTAssertEqual(result.claude.directory?.path, discovered.path)
+        let invalid = try NativeDiscovery.configurationDirectories(home: root, codexOverride: "relative", shell: shell, environment: environment)
+        XCTAssertNil(invalid.codex.directory)
+        XCTAssertNotNil(invalid.codex.error)
+        XCTAssertEqual(invalid.codex.source, "手动选择")
+    }
+
+    func testConfigurationDirectoriesRejectRecordSeparatorsInsteadOfAcceptingExistingPrefix() throws {
+        let directory = try configurationDirectory("existing-prefix")
+        let shell = try configurationShell()
+        for key in ["CODEX_HOME", "CLAUDE_CONFIG_DIR"] {
+            for separator in ["\u{1e}", "\u{1f}"] {
+                var environment = ["CODEX_HOME": directory.path, "CLAUDE_CONFIG_DIR": directory.path]
+                environment[key] = directory.path + separator + "SYNTHETIC_SUFFIX"
+                XCTAssertThrowsError(try NativeDiscovery.configurationDirectories(home: root, shell: shell, environment: environment)) {
+                    XCTAssertEqual(($0 as? NativeEngineError)?.code, "configuration_shell_failed")
+                    XCTAssertFalse(($0 as? NativeEngineError)?.message.contains("SYNTHETIC") ?? true)
+                }
+            }
+        }
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
+    }
+
+    func testConfigurationDirectoriesRequireWholeFramedRecords() throws {
+        let directory = try configurationDirectory("existing-prefix")
+        for key in ["CODEX_HOME", "CLAUDE_CONFIG_DIR"] {
+            let shell = try executable("""
+            printf '\\036MIRUUN_CONFIG_DIRECTORY\\037CODEX_HOME\\037x\\037%s\\036' "$SYNTHETIC_PATH"
+            if [ "$SYNTHETIC_BROKEN_KEY" = 'CODEX_HOME' ]; then printf 'SYNTHETIC_SUFFIX\\036'; fi
+            printf '\\036MIRUUN_CONFIG_DIRECTORY\\037CLAUDE_CONFIG_DIR\\037x\\037%s\\036' "$SYNTHETIC_PATH"
+            if [ "$SYNTHETIC_BROKEN_KEY" = 'CLAUDE_CONFIG_DIR' ]; then printf 'SYNTHETIC_SUFFIX\\036'; fi
+            """)
+            XCTAssertThrowsError(try NativeDiscovery.configurationDirectories(home: root, shell: shell, environment: [
+                "SYNTHETIC_PATH": directory.path, "SYNTHETIC_BROKEN_KEY": key
+            ])) {
+                XCTAssertEqual(($0 as? NativeEngineError)?.code, "configuration_shell_failed")
+                XCTAssertFalse(($0 as? NativeEngineError)?.message.contains("SYNTHETIC") ?? true)
+            }
+        }
+    }
+
+    func testConfigurationDirectoriesRejectFailedOrIncompleteShellWithoutSurfacingOutput() throws {
+        for script in ["printf '%s' 'SYNTHETIC_PRIVATE_OUTPUT'; exit 1", "printf '%s' 'SYNTHETIC_PRIVATE_OUTPUT'", "exit 0"] {
+            let shell = try executable(script)
+            XCTAssertThrowsError(try NativeDiscovery.configurationDirectories(home: root, shell: shell, environment: [:])) {
+                XCTAssertEqual(($0 as? NativeEngineError)?.code, "configuration_shell_failed")
+                XCTAssertFalse(($0 as? NativeEngineError)?.message.contains("SYNTHETIC") ?? true)
+            }
+        }
+    }
+
     func testHandshakeAndMetadataReadUseRealPipes() throws {
         let client = try rpc(response: #"{"id":2,"result":{"thread":{"id":"original"}}}"#)
         defer { client.close() }

@@ -4,7 +4,7 @@ import BridgeEngine
 
 /// UI state stays on the main queue. All configuration access is serialized on
 /// worker; stopping waits for any in-progress atomic update before returning.
-final class MenuAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class MenuAppDelegate: NSObject, NSApplicationDelegate {
     private let worker = DispatchQueue(label: "io.github.pixelcores.miruun.continuity", qos: .utility)
     private var timer: DispatchSourceTimer? // worker queue only
     private var guardService: ContinuityGuard? // worker queue only
@@ -14,9 +14,13 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var panelView: MenuPanelView!
     private var openItems: [NSMenuItem] = []
     private let homeField = NSTextField()
-    private let enableButton = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let claudeHomeField = NSTextField()
+    private let homeTitle = NSTextField(labelWithString: "CODEX")
+    private let discoverButton = NSButton(title: "自动查找", target: nil, action: nil)
+    private var selectedHome: URL?
+    private var isDiscovering = false
+    private let enableButton = NSSwitch(frame: .zero)
     private let loginButton = NSButton(checkboxWithTitle: "登录 Mac 时启动 Miruun", target: nil, action: nil)
-    private let autoOpenButton = NSPopUpButton(frame: .zero, pullsDown: false)
     private let openButton = NSButton(title: "打开 Codex", target: nil, action: nil)
     private let statusLabel = NSTextField(wrappingLabelWithString: "未启用")
     private let loginLabel = NSTextField(wrappingLabelWithString: "")
@@ -29,7 +33,6 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let settingsButton = NSButton(title: "设置", target: nil, action: nil)
     private let statusScroll = NSScrollView()
     private var isChoosingHome = false
-    private var isMenuTracking = false
     private var mouseMonitor: Any?
     private var transitioning = false
     private var enabled = false
@@ -48,30 +51,26 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         makeMenu()
         makeWindow()
         let preferences = UserDefaults.standard
-        homeField.stringValue = preferences.string(forKey: "continuityHome")
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex").path
-        autoOpenButton.selectItem(withTag: preferences.bool(forKey: "autoOpenCodex") ? 1 : 0)
-        homeField.toolTip = homeField.stringValue
+        let defaultHome = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex").path
+        // Older releases saved the default on every start; only a non-default
+        // legacy path should migrate as an explicit choice.
+        if preferences.object(forKey: "continuityHomeIsCustom") == nil {
+            let previous = preferences.string(forKey: "continuityHome")
+            preferences.set(previous != nil && previous != defaultHome, forKey: "continuityHomeIsCustom")
+        }
+        preferences.removeObject(forKey: "autoOpenCodex")
         refreshLoginState()
-        refreshControls()
-        if preferences.bool(forKey: "continuityEnabled") { start() }
-        else { showStatus("守护已暂停 · 现有配置保持原样", symbol: "pause.circle") }
+        discoverDirectories(resumeGuard: preferences.bool(forKey: "continuityEnabled"))
         // Manual launches must remain discoverable even after the first run.
         // Only a system login launch should start without a settings window.
         let launchEvent = NSAppleEventManager.shared().currentAppleEvent
         let launchedAtLogin = launchEvent?.eventID == kAEOpenApplication
             && launchEvent?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
-        if !launchedAtLogin {
-            if enabled && autoOpenButton.selectedTag() == 1 { openCodex() }
-            else { showWindow() }
-        }
+        if !launchedAtLogin { showWindow() }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if window != nil {
-            if enabled && autoOpenButton.selectedTag() == 1 { openCodex() }
-            else { showWindow() }
-        }
+        if window != nil { showWindow() }
         return true
     }
 
@@ -99,7 +98,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func makeWindow() {
         let frame = NSRect(origin: .zero, size: MenuPanelView.contentSize)
         window = MenuPanel(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
-        window.title = "Miruun · 对话连续性"
+        window.title = "Miruun"
         window.isReleasedWhenClosed = false
         window.onDismiss = { [weak self] in self?.hideWindow() }
         window.backgroundColor = .clear
@@ -114,11 +113,10 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         materialView.addSubview(panelView)
         window.contentView = materialView
 
-        sectionLabel.frame = NSRect(x: 61, y: 25, width: 255, height: 24)
+        sectionLabel.frame = NSRect(x: 61, y: 29, width: 255, height: 24)
         sectionLabel.font = .systemFont(ofSize: 17, weight: .semibold)
         sectionLabel.textColor = MenuPanelView.color(0xF4F7FA)
         panelView.addSubview(sectionLabel)
-        panelView.addSubview(makeLabel("Codex 对话连续性", frame: NSRect(x: 61, y: 50, width: 255, height: 14), size: 10, weight: .regular))
 
         statusButton.frame = NSRect(x: 26, y: 79, width: 280, height: 20)
         statusButton.isBordered = false
@@ -131,57 +129,56 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panelView.addSubview(statusButton)
         overviewViews.append(statusButton)
 
-        for (index, row) in [("连续性守护", "根据当前配置准备接入"), ("自动打开 Codex", "打开 Miruun 时自动启动")].enumerated() {
-            let offset = CGFloat(index) * 60
-            let title = makeLabel(row.0, frame: NSRect(x: 30, y: 127 + offset, width: 178, height: 19), size: 12, weight: .semibold)
-            title.textColor = MenuPanelView.color(0xF4F7FA)
-            let caption = makeLabel(row.1, frame: NSRect(x: 30, y: 149 + offset, width: 178, height: 14), size: 10, weight: .regular)
-            for label in [title, caption] {
-                panelView.addSubview(label)
-                overviewViews.append(label)
-            }
+        let guardTitle = makeLabel("连续性守护", frame: NSRect(x: 30, y: 135, width: 190, height: 19), size: 12, weight: .semibold)
+        guardTitle.textColor = MenuPanelView.color(0xF4F7FA)
+        let guardCaption = makeLabel("根据当前配置准备接入", frame: NSRect(x: 30, y: 161, width: 190, height: 14), size: 10, weight: .regular)
+        for label in [guardTitle, guardCaption] {
+            panelView.addSubview(label)
+            overviewViews.append(label)
         }
-        configurePopup(enableButton, titles: [("已启用", 1), ("已暂停", 0)],
-                       frame: NSRect(x: 218, y: 133, width: 84, height: 28), action: #selector(changeGuardMode))
-        enableButton.setAccessibilityLabel("后台连续性守护")
-        configurePopup(autoOpenButton, titles: [("已开启", 1), ("已关闭", 0)],
-                       frame: NSRect(x: 218, y: 193, width: 84, height: 28), action: #selector(toggleAutoOpen))
-        autoOpenButton.setAccessibilityLabel("打开 Miruun 时自动打开 Codex")
-        styleButton(openButton, frame: NSRect(x: 16, y: 248, width: 300, height: 38))
+        enableButton.frame = NSRect(x: 252, y: 140, width: 42, height: 26)
+        enableButton.target = self
+        enableButton.action = #selector(changeGuardMode)
+        enableButton.setAccessibilityLabel("连续性守护")
+        styleButton(openButton, frame: NSRect(x: 16, y: 221, width: 300, height: 38))
         openButton.font = .systemFont(ofSize: 13, weight: .semibold)
         openButton.layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(0.72).cgColor
         openButton.layer?.cornerRadius = 10
         openButton.target = self
         openButton.action = #selector(openCodex)
-        for button in [enableButton as NSButton, autoOpenButton as NSButton, openButton] {
+        for button in [enableButton as NSControl, openButton as NSControl] {
             panelView.addSubview(button)
             overviewViews.append(button)
         }
 
-        let homeTitle = makeLabel("CODEX HOME", frame: NSRect(x: 30, y: 101, width: 272, height: 14), size: 9, weight: .semibold)
-        homeField.frame = NSRect(x: 30, y: 121, width: 272, height: 20)
-        homeField.isEditable = false
-        homeField.isSelectable = true
-        homeField.isBordered = false
-        homeField.drawsBackground = false
-        homeField.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
-        homeField.textColor = MenuPanelView.color(0xF4F7FA)
-        homeField.lineBreakMode = .byTruncatingMiddle
-        chooseButton = NSButton(title: "选择目录…", target: self, action: #selector(chooseHome))
-        styleButton(chooseButton, frame: NSRect(x: 30, y: 154, width: 126, height: 28))
+        homeTitle.frame = NSRect(x: 30, y: 91, width: 190, height: 14)
+        homeTitle.font = .systemFont(ofSize: 9, weight: .semibold)
+        homeTitle.textColor = MenuPanelView.color(0xC9D2DD)
+        styleButton(discoverButton, frame: NSRect(x: 230, y: 86, width: 72, height: 23))
+        discoverButton.font = .systemFont(ofSize: 10, weight: .medium)
+        discoverButton.target = self
+        discoverButton.action = #selector(rediscoverDirectories)
+        discoverButton.toolTip = "暂停守护后，按当前配置自动查找目录。"
+        configureDirectoryField(homeField, frame: NSRect(x: 30, y: 114, width: 272, height: 20))
+        homeField.setAccessibilityLabel("Codex 配置目录")
+        let claudeTitle = makeLabel("CLAUDE", frame: NSRect(x: 30, y: 142, width: 272, height: 14), size: 9, weight: .semibold)
+        configureDirectoryField(claudeHomeField, frame: NSRect(x: 30, y: 163, width: 272, height: 20))
+        claudeHomeField.setAccessibilityLabel("Claude 配置目录")
+        chooseButton = NSButton(title: "选择 Codex 目录…", target: self, action: #selector(chooseHome))
+        styleButton(chooseButton, frame: NSRect(x: 30, y: 196, width: 126, height: 28))
         let backupsButton = NSButton(title: "配置备份…", target: self, action: #selector(revealBackups))
-        styleButton(backupsButton, frame: NSRect(x: 168, y: 154, width: 134, height: 28))
-        loginButton.frame = NSRect(x: 30, y: 198, width: 272, height: 22)
+        styleButton(backupsButton, frame: NSRect(x: 168, y: 196, width: 134, height: 28))
+        loginButton.frame = NSRect(x: 30, y: 237, width: 272, height: 22)
         loginButton.font = .systemFont(ofSize: 11, weight: .medium)
         loginButton.setAccessibilityLabel(loginButton.title)
         loginButton.title = ""
         loginButton.contentTintColor = MenuPanelView.color(0xF4F7FA)
         loginButton.target = self
         loginButton.action = #selector(toggleLogin)
-        loginLabel.frame = NSRect(x: 30, y: 235, width: 272, height: 39)
+        loginLabel.frame = NSRect(x: 30, y: 267, width: 272, height: 22)
         loginLabel.font = .systemFont(ofSize: 10)
         loginLabel.textColor = MenuPanelView.color(0xC9D2DD)
-        settingsViews = [homeTitle, homeField, chooseButton, backupsButton, loginButton, loginLabel]
+        settingsViews = [homeTitle, discoverButton, homeField, claudeTitle, claudeHomeField, chooseButton, backupsButton, loginButton, loginLabel]
         for view in settingsViews { panelView.addSubview(view) }
 
         statusScroll.frame = NSRect(x: 30, y: 101, width: 272, height: 170)
@@ -230,15 +227,16 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         button.layer?.cornerRadius = 7
     }
 
-    private func configurePopup(_ button: NSPopUpButton, titles: [(String, Int)], frame: NSRect, action: Selector) {
-        for (title, tag) in titles {
-            button.addItem(withTitle: title)
-            button.lastItem?.tag = tag
-        }
-        styleButton(button, frame: frame)
-        button.target = self
-        button.action = action
-        button.menu?.delegate = self
+    private func configureDirectoryField(_ field: NSTextField, frame: NSRect) {
+        field.frame = frame
+        field.isEditable = false
+        field.isSelectable = true
+        field.isBordered = false
+        field.drawsBackground = false
+        field.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
+        field.textColor = MenuPanelView.color(0xF4F7FA)
+        field.lineBreakMode = .byTruncatingMiddle
+        field.stringValue = "正在查找…"
     }
 
     private func configureFooter(_ button: NSButton, label: String) {
@@ -260,12 +258,16 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func showOverview() { setPage(0); showWindow() }
-    @objc private func showSettings() { setPage(1); showWindow() }
+    @objc private func showSettings() {
+        setPage(1)
+        showWindow()
+        if !enabled { discoverDirectories() }
+    }
     @objc private func showConnectionStatus() { setPage(2); showWindow() }
     @objc private func toggleSettings() { if panelView.page == 0 { showSettings() } else { showOverview() } }
 
     @objc private func changeGuardMode() {
-        if (enableButton.selectedTag() == 1) != enabled { toggleEnabled() }
+        if (enableButton.state == .on) != enabled { toggleEnabled() }
     }
 
     private var backupDirectory: URL {
@@ -291,7 +293,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.activate(ignoringOtherApps: true)
         if mouseMonitor == nil {
             mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-                guard let self, self.window.isVisible, !self.isChoosingHome, !self.isMenuTracking else { return }
+                guard let self, self.window.isVisible, !self.isChoosingHome else { return }
                 let location = NSEvent.mouseLocation
                 if self.window.frame.contains(location) { return }
                 if let button = self.statusItem.button, let anchorWindow = button.window,
@@ -306,15 +308,12 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor); self.mouseMonitor = nil }
     }
 
-    func menuWillOpen(_ menu: NSMenu) { isMenuTracking = true }
-    func menuDidClose(_ menu: NSMenu) { isMenuTracking = false }
-
     func applicationDidResignActive(_ notification: Notification) {
-        if !isChoosingHome && !isMenuTracking { hideWindow() }
+        if !isChoosingHome { hideWindow() }
     }
 
     @objc private func chooseHome() {
-        guard !enabled, !transitioning else { return }
+        guard !enabled, !transitioning, !isDiscovering else { return }
         isChoosingHome = true
         defer { isChoosingHome = false; showWindow() }
         let panel = NSOpenPanel()
@@ -322,14 +321,64 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panel.canCreateDirectories = false; panel.allowsMultipleSelection = false
         panel.title = "选择 Codex 使用的 CODEX_HOME"
         if panel.runModal() == .OK, let url = panel.url {
-            homeField.stringValue = url.path
-            homeField.toolTip = url.path
             UserDefaults.standard.set(url.path, forKey: "continuityHome")
+            UserDefaults.standard.set(true, forKey: "continuityHomeIsCustom")
+            discoverDirectories()
+        }
+    }
+
+    @objc private func rediscoverDirectories() {
+        guard !enabled, !transitioning, !isDiscovering else { return }
+        UserDefaults.standard.set(false, forKey: "continuityHomeIsCustom")
+        discoverDirectories()
+    }
+
+    private func discoverDirectories(resumeGuard: Bool = false) {
+        guard !enabled, !transitioning, !isDiscovering else { return }
+        isDiscovering = true
+        selectedHome = nil
+        homeField.stringValue = "正在查找…"
+        claudeHomeField.stringValue = "正在查找…"
+        refreshControls()
+        showStatus("正在查找配置目录…", symbol: "arrow.triangle.2.circlepath")
+        let preferences = UserDefaults.standard
+        let manualHome = preferences.bool(forKey: "continuityHomeIsCustom")
+            ? preferences.string(forKey: "continuityHome") : nil
+        worker.async {
+            do {
+                let directories = try NativeDiscovery.configurationDirectories(codexOverride: manualHome)
+                DispatchQueue.main.async {
+                    guard !self.transitioning else { return }
+                    self.isDiscovering = false
+                    self.selectedHome = directories.codex.directory
+                    self.homeTitle.stringValue = manualHome == nil ? "CODEX" : "CODEX · 手动选择"
+                    self.homeField.stringValue = directories.codex.directory?.path ?? directories.codex.error ?? "未找到目录"
+                    self.homeField.toolTip = self.homeField.stringValue + "\n来源：" + directories.codex.source
+                    self.claudeHomeField.stringValue = directories.claude.directory?.path ?? directories.claude.error ?? "未找到目录"
+                    self.claudeHomeField.toolTip = self.claudeHomeField.stringValue + "\n来源：" + directories.claude.source
+                    self.refreshControls()
+                    if resumeGuard && self.selectedHome != nil { self.start() }
+                    else if let error = directories.codex.error { self.showStatus(error, symbol: "exclamationmark.circle") }
+                    else { self.showStatus("守护已暂停 · 配置目录已找到", symbol: "pause.circle") }
+                }
+            } catch {
+                let message = (error as? NativeEngineError)?.message ?? "无法查找配置目录。"
+                DispatchQueue.main.async {
+                    guard !self.transitioning else { return }
+                    self.isDiscovering = false
+                    self.homeField.stringValue = "无法查找目录"
+                    self.claudeHomeField.stringValue = "无法查找目录"
+                    self.homeField.toolTip = message
+                    self.claudeHomeField.toolTip = message
+                    self.refreshControls()
+                    self.showStatus(message, symbol: "exclamationmark.circle")
+                }
+            }
         }
     }
 
     @objc private func toggleEnabled() {
-        guard !transitioning else { return }
+        guard !transitioning, !isDiscovering else { refreshControls(); return }
         if enabled { stop() } else { start() }
     }
 
@@ -338,13 +387,16 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             showStatus("请运行打包后的 Miruun.app", symbol: "exclamationmark.circle")
             return
         }
+        guard let home = selectedHome else {
+            refreshControls()
+            showStatus("未找到 Codex 配置目录，请自动查找或手动选择。", symbol: "exclamationmark.circle")
+            return
+        }
         enabled = true
         launchError = nil
         UserDefaults.standard.set(true, forKey: "continuityEnabled")
-        UserDefaults.standard.set(homeField.stringValue, forKey: "continuityHome")
         refreshControls()
         showStatus("正在等待稳定的代理配置…", symbol: "arrow.triangle.2.circlepath")
-        let home = URL(fileURLWithPath: homeField.stringValue, isDirectory: true)
         let backups = backupDirectory
         worker.async { [self] in
             self.guardService = ContinuityGuard(home: home, backupDirectory: backups)
@@ -376,32 +428,28 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func refreshControls() {
-        enableButton.selectItem(withTag: enabled ? 1 : 0)
-        enableButton.isEnabled = !transitioning
-        chooseButton.isEnabled = !enabled && !transitioning
+        enableButton.state = enabled ? .on : .off
+        enableButton.isEnabled = !transitioning && !isDiscovering && (enabled || selectedHome != nil)
+        chooseButton.isEnabled = !enabled && !transitioning && !isDiscovering
+        discoverButton.isEnabled = chooseButton.isEnabled
         openButton.isEnabled = enabled && !transitioning && launchRequest == nil
         for item in openItems { item.isEnabled = openButton.isEnabled }
         openButton.title = launchRequest == nil ? "打开 Codex" : "准备中…"
         openButton.alphaValue = openButton.isEnabled ? 1 : 0.55
     }
 
-    @objc private func toggleAutoOpen() {
-        UserDefaults.standard.set(autoOpenButton.selectedTag() == 1, forKey: "autoOpenCodex")
-        refreshControls()
-    }
-
     @objc private func openCodex() {
-        guard enabled, !transitioning, launchRequest == nil else { return }
+        guard enabled, !transitioning, launchRequest == nil, let home = selectedHome else { return }
         launchError = nil
         guard let application = NSWorkspace.shared.urlForApplication(withBundleIdentifier: Self.codexIdentifier),
               Bundle(url: application)?.bundleIdentifier == Self.codexIdentifier else {
             finishLaunch(error: "未找到 Codex 应用，请先安装并正常打开一次。")
             return
         }
-        let id = UUID(), home = URL(fileURLWithPath: homeField.stringValue, isDirectory: true)
+        let id = UUID()
         launchRequest = id
         refreshControls()
-        showStatus("正在检查当前接入配置，完成后自动打开 Codex…", symbol: "clock")
+        showStatus("正在检查当前接入配置，准备完成后打开 Codex…", symbol: "clock")
         worker.async {
             self.pendingLaunch = (id, application, home)
         }
@@ -515,7 +563,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func refreshLoginState() {
         let state = SMAppService.mainApp.status
         loginButton.state = state == .enabled || state == .requiresApproval ? .on : .off
-        loginLabel.stringValue = state == .requiresApproval ? "请在系统设置 → 通用 → 登录项中允许 Miruun。" : "登录 Mac 时仅启动守护，Codex 不会自动打开。"
+        loginLabel.stringValue = state == .requiresApproval ? "请在系统设置 → 通用 → 登录项中允许 Miruun。" : "登录 Mac 时启动后台守护。"
         loginLabel.toolTip = loginLabel.stringValue
     }
 
@@ -542,6 +590,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func quit() { NSApp.terminate(nil) }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        transitioning = true
         launchRequest = nil
         hideWindow()
         worker.async {

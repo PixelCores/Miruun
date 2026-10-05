@@ -8,6 +8,96 @@ public struct BackendCapabilities {
 }
 
 public enum NativeDiscovery {
+    /// Finds only global configuration directory paths and file metadata. The
+    /// desktop host merges login-shell variables into its inherited environment;
+    /// an unset shell variable therefore leaves an inherited override intact.
+    /// Invalid explicit overrides never fall back to another directory.
+    public static func configurationDirectories(
+        home: URL = FileManager.default.homeDirectoryForCurrentUser,
+        codexOverride: String? = nil,
+        shell: URL? = nil,
+        environment: [String: String]? = nil
+    ) throws -> (
+        codex: (directory: URL?, source: String, error: String?),
+        claude: (directory: URL?, source: String, error: String?)
+    ) {
+        let executable: URL
+        if let shell { executable = shell }
+        else {
+            guard let value = getpwuid(getuid())?.pointee.pw_shell,
+                  !String(cString: value).isEmpty else {
+                throw NativeEngineError("configuration_shell_unknown", "无法确认登录 shell；未检测配置目录。")
+            }
+            executable = URL(fileURLWithPath: String(cString: value))
+        }
+        let inherited = environment ?? ProcessInfo.processInfo.environment
+        var variables = inherited
+        variables["CODEX_SHELL"] = "1"
+        variables["DISABLE_AUTO_UPDATE"] = "true"
+        variables["ZSH_TMUX_AUTOSTARTED"] = "true"
+        variables["ZSH_TMUX_AUTOSTART"] = "false"
+        // Reject framing delimiters before they can be mistaken for path endings.
+        let command = #"""
+        case "${CODEX_HOME-}${CLAUDE_CONFIG_DIR-}" in
+            *"$(printf '\036')"*|*"$(printf '\037')"*) exit 1;;
+        esac
+        printf '\036MIRUUN_CONFIG_DIRECTORY\037CODEX_HOME\037%s\037%s\036' "${CODEX_HOME+x}" "${CODEX_HOME-}"
+        printf '\036MIRUUN_CONFIG_DIRECTORY\037CLAUDE_CONFIG_DIR\037%s\037%s\036' "${CLAUDE_CONFIG_DIR+x}" "${CLAUDE_CONFIG_DIR-}"
+        """#
+        let output: String
+        do {
+            output = try runTool(executable, ["-ilc", command], environment: variables, timeout: 10)
+        } catch {
+            throw NativeEngineError("configuration_shell_failed", "无法读取登录 shell 的配置目录；请检查 shell 后重新检测。")
+        }
+        let codexMarker = "\u{1e}MIRUUN_CONFIG_DIRECTORY\u{1f}CODEX_HOME\u{1f}"
+        let claudeMarker = "\u{1e}MIRUUN_CONFIG_DIRECTORY\u{1f}CLAUDE_CONFIG_DIR\u{1f}"
+        guard let codexRange = output.range(of: codexMarker, options: .backwards),
+              let claudeRange = output.range(of: claudeMarker, options: .backwards),
+              codexRange.upperBound <= claudeRange.lowerBound else {
+            throw NativeEngineError("configuration_shell_failed", "登录 shell 未完整返回配置目录；请检查 shell 后重新检测。")
+        }
+        let records = [output[codexRange.upperBound..<claudeRange.lowerBound], output[claudeRange.upperBound...]]
+        var results: [(directory: URL?, source: String, error: String?)] = []
+        for (index, key) in ["CODEX_HOME", "CLAUDE_CONFIG_DIR"].enumerated() {
+            let record = records[index]
+            guard record.last == "\u{1e}", !record.dropLast().contains("\u{1e}") else {
+                throw NativeEngineError("configuration_shell_failed", "登录 shell 返回的配置目录边界未知；未使用默认目录。")
+            }
+            let fields = record.dropLast().split(separator: "\u{1f}", omittingEmptySubsequences: false)
+            guard fields.count == 2, fields[0] == "x" || fields[0].isEmpty,
+                  fields[0] == "x" || fields[1].isEmpty else {
+                throw NativeEngineError("configuration_shell_failed", "登录 shell 返回的配置目录格式未知；未使用默认目录。")
+            }
+            let manual = key == "CODEX_HOME" ? codexOverride : nil
+            let override = manual ?? (fields[0] == "x" ? String(fields[1]) : inherited[key])
+            let source = manual != nil ? "手动选择" : override == nil ? "默认目录" : fields[0] == "x" && override != inherited[key] ? key + "（登录 shell）" : key
+            let defaultName = index == 0 ? ".codex" : ".claude"
+            let path = override ?? home.appendingPathComponent(defaultName, isDirectory: true).path
+            results.append(configurationDirectory(path, source: source, name: key))
+        }
+        return (codex: results[0], claude: results[1])
+    }
+
+    private static func configurationDirectory(_ path: String, source: String, name: String) -> (directory: URL?, source: String, error: String?) {
+        let components = path.split(separator: "/")
+        guard path.hasPrefix("/"), !components.contains("."), !components.contains(".."),
+              !path.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
+            return (nil, source, name + " 必须指向绝对、无点路径的配置目录。")
+        }
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+        do { try NativeFileSafety.noSymlinks(directory) }
+        catch { return (nil, source, name + " 配置目录包含符号链接或无法安全访问。") }
+        var info = stat()
+        guard lstat(directory.path, &info) == 0 else {
+            return (nil, source, name + (errno == ENOENT ? " 配置目录不存在。" : " 配置目录无法访问。"))
+        }
+        guard info.st_mode & S_IFMT == S_IFDIR else {
+            return (nil, source, name + " 指向普通文件，而不是配置目录。")
+        }
+        return (directory, source, nil)
+    }
+
     /// The desktop app merges its interactive login shell environment before
     /// spawning the local backend. Reject a conflicting CODEX_HOME without
     /// capturing or displaying the complete environment.

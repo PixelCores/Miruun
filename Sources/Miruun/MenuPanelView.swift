@@ -76,21 +76,15 @@ final class MenuPanelView: NSView {
 
         if page == 0 {
             drawContainer(NSRect(x: 16, y: 75, width: 300, height: 28), radius: 14)
-            drawContainer(NSRect(x: 16, y: 114, width: 300, height: 120), radius: 12)
-            let divider = NSBezierPath()
-            divider.move(to: NSPoint(x: 30, y: 174))
-            divider.line(to: NSPoint(x: 302, y: 174))
-            NSColor.white.withAlphaComponent(0.12).setStroke()
-            divider.lineWidth = 0.5
-            divider.stroke()
+            drawContainer(NSRect(x: 16, y: 114, width: 300, height: 78), radius: 12)
             // The real launch button supplies its blue tint and disabled state.
-            drawContainer(NSRect(x: 16, y: 248, width: 300, height: 38),
+            drawContainer(NSRect(x: 16, y: 221, width: 300, height: 38),
                           radius: 10, fillAlpha: 0.035)
         } else {
-            drawContainer(NSRect(x: 16, y: 86, width: 300, height: 200), radius: 12)
+            drawContainer(NSRect(x: 16, y: 78, width: 300, height: 215), radius: 12)
             if page == 1 {
                 ("登录 Mac 时启动 Miruun" as NSString).draw(
-                    at: NSPoint(x: 51, y: 203), withAttributes: [
+                    at: NSPoint(x: 51, y: 242), withAttributes: [
                         .font: NSFont.systemFont(ofSize: 11, weight: .medium),
                         .foregroundColor: NSColor.labelColor
                     ])
