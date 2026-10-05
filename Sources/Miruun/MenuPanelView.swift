@@ -16,9 +16,19 @@ final class MenuPanel: NSPanel {
 final class MenuPanelView: NSView {
     private weak var materialView: NSVisualEffectView?
 
-    static let contentSize = NSSize(width: 332, height: 350)
+    static func contentSize(for page: Int) -> NSSize {
+        NSSize(width: 332, height: page == 0 ? 246 : 350)
+    }
 
-    var page = 0 { didSet { needsDisplay = true } }
+    var page = 0 {
+        didSet {
+            let size = Self.contentSize(for: page)
+            setFrameSize(size)
+            materialView?.setFrameSize(size)
+            updateMask()
+            needsDisplay = true
+        }
+    }
     var arrowX: CGFloat = 166 {
         didSet {
             updateMask()
@@ -28,15 +38,15 @@ final class MenuPanelView: NSView {
 
     override var isFlipped: Bool { true }
     override var isOpaque: Bool { false }
-    override var intrinsicContentSize: NSSize { Self.contentSize }
+    override var intrinsicContentSize: NSSize { Self.contentSize(for: page) }
 
     override init(frame frameRect: NSRect) {
-        super.init(frame: NSRect(origin: frameRect.origin, size: Self.contentSize))
+        super.init(frame: NSRect(origin: frameRect.origin, size: Self.contentSize(for: 0)))
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
-        setFrameSize(Self.contentSize)
+        setFrameSize(Self.contentSize(for: page))
     }
 
     func installMaterial(_ view: NSVisualEffectView) {
@@ -54,7 +64,7 @@ final class MenuPanelView: NSView {
         guard let materialView else { return }
         // Snapshot the path so the retained image does not retain this view.
         let path = surfacePath()
-        materialView.maskImage = NSImage(size: Self.contentSize, flipped: true) { _ in
+        materialView.maskImage = NSImage(size: Self.contentSize(for: page), flipped: true) { _ in
             NSColor.white.setFill()
             path.fill()
             return true
@@ -77,9 +87,6 @@ final class MenuPanelView: NSView {
         if page == 0 {
             drawContainer(NSRect(x: 16, y: 75, width: 300, height: 28), radius: 14)
             drawContainer(NSRect(x: 16, y: 114, width: 300, height: 78), radius: 12)
-            // The real launch button supplies its blue tint and disabled state.
-            drawContainer(NSRect(x: 16, y: 221, width: 300, height: 38),
-                          radius: 10, fillAlpha: 0.035)
         } else {
             drawContainer(NSRect(x: 16, y: 78, width: 300, height: 215), radius: 12)
             if page == 1 {
@@ -90,13 +97,14 @@ final class MenuPanelView: NSView {
                     ])
             }
         }
-        drawContainer(NSRect(x: 16, y: 304, width: 144, height: 30), radius: 9)
-        drawContainer(NSRect(x: 172, y: 304, width: 144, height: 30), radius: 9)
+        let footerY = Self.contentSize(for: page).height - 46
+        drawContainer(NSRect(x: 16, y: footerY, width: 144, height: 30), radius: 9)
+        drawContainer(NSRect(x: 172, y: footerY, width: 144, height: 30), radius: 9)
         drawFooter(symbol: page == 0 ? "gearshape" : "arrow.left",
                    title: page == 0 ? "设置" : "返回",
-                   in: NSRect(x: 16, y: 304, width: 144, height: 30))
+                   in: NSRect(x: 16, y: footerY, width: 144, height: 30))
         drawFooter(symbol: "power", title: "退出",
-                   in: NSRect(x: 172, y: 304, width: 144, height: 30))
+                   in: NSRect(x: 172, y: footerY, width: 144, height: 30))
     }
 
     static func color(_ hex: UInt32) -> NSColor {
@@ -135,6 +143,7 @@ final class MenuPanelView: NSView {
 
     private func surfacePath() -> NSBezierPath {
         let path = NSBezierPath()
+        let height = Self.contentSize(for: page).height
         let tip = min(max(arrowX, 34), 298)
         path.move(to: NSPoint(x: 19, y: 11.5))
         path.line(to: NSPoint(x: tip - 15, y: 11.5))
@@ -153,14 +162,14 @@ final class MenuPanelView: NSView {
         path.curve(to: NSPoint(x: 331.5, y: 30),
                    controlPoint1: NSPoint(x: 323.2, y: 11.5),
                    controlPoint2: NSPoint(x: 331.5, y: 19.8))
-        path.line(to: NSPoint(x: 331.5, y: 331))
-        path.curve(to: NSPoint(x: 313, y: 349.5),
-                   controlPoint1: NSPoint(x: 331.5, y: 341.2),
-                   controlPoint2: NSPoint(x: 323.2, y: 349.5))
-        path.line(to: NSPoint(x: 19, y: 349.5))
-        path.curve(to: NSPoint(x: 0.5, y: 331),
-                   controlPoint1: NSPoint(x: 8.8, y: 349.5),
-                   controlPoint2: NSPoint(x: 0.5, y: 341.2))
+        path.line(to: NSPoint(x: 331.5, y: height - 19))
+        path.curve(to: NSPoint(x: 313, y: height - 0.5),
+                   controlPoint1: NSPoint(x: 331.5, y: height - 8.8),
+                   controlPoint2: NSPoint(x: 323.2, y: height - 0.5))
+        path.line(to: NSPoint(x: 19, y: height - 0.5))
+        path.curve(to: NSPoint(x: 0.5, y: height - 19),
+                   controlPoint1: NSPoint(x: 8.8, y: height - 0.5),
+                   controlPoint2: NSPoint(x: 0.5, y: height - 8.8))
         path.line(to: NSPoint(x: 0.5, y: 30))
         path.curve(to: NSPoint(x: 19, y: 11.5),
                    controlPoint1: NSPoint(x: 0.5, y: 19.8),

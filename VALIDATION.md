@@ -4,20 +4,20 @@
 
 日期：2026 年 10 月 5 日。沿用 `main@d78f7fa78c4f4297c4cc99c0e2bc86eeab1891cd` 与 `codex/glass-core-panel` 分支；源码版本未变。
 
-当前首页仅保留 Miruun 标题、实际状态入口、原生 `NSSwitch` 连续性守护和手动“打开 Codex”；移除副标题、自动打开选项及首次启动/reopen 的自动请求，清理旧 `autoOpenCodex` 偏好。原版月球与 332 × 350 pt 玻璃浮窗保留。
+当前首页仅保留 Miruun 标题、实际状态入口、原生 `NSSwitch` 连续性守护及底部设置/退出；移除首页“打开 Codex”按钮与蓝色底板，手动启动保留在应用菜单中。移除副标题、自动打开选项及首次启动/reopen 的自动请求，清理旧 `autoOpenCodex` 偏好。原版月球保留；首页缩为 332 × 246 pt，设置与完整状态仍为 332 × 350 pt，窗口、遮罩和底部按钮同步按页尺寸更新。
 
 设置显示自动发现的 Codex/Claude 全局配置目录。发现复用 worker 与有界登录 shell，只获取两个目录变量并检查文件元数据；默认结果不永久固定，非默认旧路径迁移为手选。显式无效路径、链接和 shell 失败可观察；目录未确定前禁用守护和启动，维护中不替换目录，退出阻止发现回调再次开启守护。Claude 仅发现并展示目录。
 
 | 验证 | 结果 |
 | --- | --- |
-| 最终 XCTest | 136 项通过，0 失败（BridgeEngine 123、BridgeCore 13），日志 `/private/tmp/miruun-directory-switch-final-tests.log` |
+| 目录发现提交 XCTest | `8d53beb` 的 136 项通过，0 失败（BridgeEngine 123、BridgeCore 13），日志 `/private/tmp/miruun-directory-switch-final-tests.log`；本轮仅移除首页按钮并调整布局，未重复运行未受影响的核心测试 |
 | 目录回归 | 新增 12 项合成测试，覆盖默认/缺失/自定义路径、shell 合并与 unset、无效覆盖不回退、链接、手动优先及畸形记录；独立复核发现的分隔符截断问题已修复并补回归 |
-| Release 与打包 | 最终重编译通过，无 warning/error；plist、压缩包内容与可执行权限检查通过，日志 `/private/tmp/miruun-directory-switch-final-release.log` |
-| 实际 GUI | 首页无副标题和自动打开选项，守护为原生开关；暂停/启用对应状态及手动启动按钮一致，暂停后自动查找正常，目录面板取消保留原目录 |
-| 最终包 | 实际运行 `dist/20261005-120603-directory-switch/Miruun.app`，启动只显示面板，没有待启动请求；发现 `/Users/pixelkernel/.codex` 和 `/Users/pixelkernel/.claude`，守护启用、配置就绪及登录项已选状态保持 |
+| Release 与打包 | 移除首页按钮后重编译通过，无 warning/error；plist、压缩包内容与可执行权限检查通过，日志 `/private/tmp/miruun-guard-only-release.log` |
+| 实际 GUI | 最新首页已无“打开 Codex”按钮，664 × 492 px；设置与状态页为 664 × 700 px，返回恢复紧凑首页，遮罩、文字与底部控件无裁切。目录发现提交曾验证开关启停、暂停后自动查找及目录面板取消，原路径保持 |
+| 最终包 | 实际运行 `dist/20261005-121828-guard-only/Miruun.app`，启动只显示面板，没有待启动请求；发现 `/Users/pixelkernel/.codex` 和 `/Users/pixelkernel/.claude`，守护启用、配置就绪及登录项已选状态保持 |
 | 独立复核 | 所选 Codex URL 同时用于守护与手动启动；删除自动请求后稳定采样和 UUID 取消链保留，未发现未解决问题 |
 
-截图为 `/private/tmp/miruun-directory-switch-overview-ui.png` 与 `/private/tmp/miruun-directory-switch-settings-ui.png`，应用包为 `/private/tmp/Miruun-directory-switch.zip`。本次没有关闭当前 Codex、发送真实回合或读取历史数据库；没有更改登录项注册。真实客户端冷启动与其他系统版本仍未额外验收。
+最新截图为 `/private/tmp/miruun-guard-only-overview-ui.png`、`/private/tmp/miruun-guard-only-settings-ui.png` 与 `/private/tmp/miruun-guard-only-status-ui.png`，应用包为 `/private/tmp/Miruun-guard-only.zip`。本次没有关闭当前 Codex、发送真实回合或读取历史数据库；没有更改登录项注册。真实客户端冷启动与其他系统版本仍未额外验收。
 
 ### 初版玻璃界面验收
 

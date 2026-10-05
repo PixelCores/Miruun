@@ -21,7 +21,6 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
     private var isDiscovering = false
     private let enableButton = NSSwitch(frame: .zero)
     private let loginButton = NSButton(checkboxWithTitle: "登录 Mac 时启动 Miruun", target: nil, action: nil)
-    private let openButton = NSButton(title: "打开 Codex", target: nil, action: nil)
     private let statusLabel = NSTextField(wrappingLabelWithString: "未启用")
     private let loginLabel = NSTextField(wrappingLabelWithString: "")
     private var chooseButton: NSButton!
@@ -31,6 +30,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
     private let sectionLabel = NSTextField(labelWithString: "Miruun")
     private let statusButton = NSButton(title: "查看连接状态", target: nil, action: nil)
     private let settingsButton = NSButton(title: "设置", target: nil, action: nil)
+    private let quitButton = NSButton(title: "退出", target: nil, action: nil)
     private let statusScroll = NSScrollView()
     private var isChoosingHome = false
     private var mouseMonitor: Any?
@@ -96,7 +96,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func makeWindow() {
-        let frame = NSRect(origin: .zero, size: MenuPanelView.contentSize)
+        let frame = NSRect(origin: .zero, size: MenuPanelView.contentSize(for: 0))
         window = MenuPanel(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.title = "Miruun"
         window.isReleasedWhenClosed = false
@@ -140,16 +140,8 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         enableButton.target = self
         enableButton.action = #selector(changeGuardMode)
         enableButton.setAccessibilityLabel("连续性守护")
-        styleButton(openButton, frame: NSRect(x: 16, y: 221, width: 300, height: 38))
-        openButton.font = .systemFont(ofSize: 13, weight: .semibold)
-        openButton.layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(0.72).cgColor
-        openButton.layer?.cornerRadius = 10
-        openButton.target = self
-        openButton.action = #selector(openCodex)
-        for button in [enableButton as NSControl, openButton as NSControl] {
-            panelView.addSubview(button)
-            overviewViews.append(button)
-        }
+        panelView.addSubview(enableButton)
+        overviewViews.append(enableButton)
 
         homeTitle.frame = NSRect(x: 30, y: 91, width: 190, height: 14)
         homeTitle.font = .systemFont(ofSize: 9, weight: .semibold)
@@ -198,7 +190,8 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         settingsButton.target = self
         settingsButton.action = #selector(toggleSettings)
         configureFooter(settingsButton, label: "设置")
-        let quitButton = NSButton(title: "退出", target: self, action: #selector(quit))
+        quitButton.target = self
+        quitButton.action = #selector(quit)
         quitButton.frame = NSRect(x: 172, y: 304, width: 144, height: 30)
         configureFooter(quitButton, label: "退出")
         panelView.addSubview(settingsButton)
@@ -250,6 +243,9 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
 
     private func setPage(_ page: Int) {
         panelView.page = page
+        let footerY = MenuPanelView.contentSize(for: page).height - 46
+        settingsButton.setFrameOrigin(NSPoint(x: 16, y: footerY))
+        quitButton.setFrameOrigin(NSPoint(x: 172, y: footerY))
         for view in overviewViews { view.isHidden = page != 0 }
         for view in settingsViews { view.isHidden = page != 1 }
         for view in statusViews { view.isHidden = page != 2 }
@@ -284,7 +280,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
               let screen = anchorWindow.screen else { return }
         let anchor = anchorWindow.convertToScreen(button.convert(button.bounds, to: nil))
         let visible = screen.visibleFrame
-        let size = MenuPanelView.contentSize
+        let size = MenuPanelView.contentSize(for: panelView.page)
         let x = min(max(anchor.midX - size.width / 2, visible.minX), visible.maxX - size.width)
         let y = max(visible.minY, min(anchor.minY - size.height, visible.maxY - size.height))
         panelView.arrowX = min(max(anchor.midX - x, 24), size.width - 24)
@@ -432,10 +428,9 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         enableButton.isEnabled = !transitioning && !isDiscovering && (enabled || selectedHome != nil)
         chooseButton.isEnabled = !enabled && !transitioning && !isDiscovering
         discoverButton.isEnabled = chooseButton.isEnabled
-        openButton.isEnabled = enabled && !transitioning && launchRequest == nil
-        for item in openItems { item.isEnabled = openButton.isEnabled }
-        openButton.title = launchRequest == nil ? "打开 Codex" : "准备中…"
-        openButton.alphaValue = openButton.isEnabled ? 1 : 0.55
+        let canOpen = enabled && !transitioning && launchRequest == nil
+        for item in openItems { item.isEnabled = canOpen }
+
     }
 
     @objc private func openCodex() {
