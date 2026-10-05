@@ -115,64 +115,28 @@ final class MenuPanelView: NSView {
         let image = NSImage(size: size, flipped: true) { _ in
             NSGraphicsContext.saveGraphicsState()
             defer { NSGraphicsContext.restoreGraphicsState() }
-            let scale = NSAffineTransform()
-            scale.scaleX(by: size.width / 24, yBy: size.height / 24)
-            scale.concat()
-
+            let unitX = size.width / 24
+            let unitY = size.height / 24
             NSColor.white.setFill()
-            NSBezierPath(ovalIn: NSRect(x: 1, y: 1, width: 22, height: 22)).fill()
-            // Paw-shaped craters use alpha so the system can tint the menu icon.
-            let paw = NSBezierPath()
-            for toe in [
-                NSRect(x: -4.9, y: -3.1, width: 2.2, height: 2.8),
-                NSRect(x: -2.7, y: -5.2, width: 2.2, height: 2.8),
-                NSRect(x: 0.5, y: -5.2, width: 2.2, height: 2.8),
-                NSRect(x: 2.7, y: -3.1, width: 2.2, height: 2.8)
-            ] {
-                paw.appendOval(in: toe)
-            }
-            paw.move(to: NSPoint(x: -3.8, y: 3.4))
-            paw.curve(to: NSPoint(x: -3.2, y: 0.8),
-                      controlPoint1: NSPoint(x: -4.4, y: 2.7),
-                      controlPoint2: NSPoint(x: -4, y: 1.4))
-            paw.curve(to: NSPoint(x: -1.1, y: -0.2),
-                      controlPoint1: NSPoint(x: -2.7, y: 0.3),
-                      controlPoint2: NSPoint(x: -2, y: -0.7))
-            paw.curve(to: NSPoint(x: 1.1, y: -0.2),
-                      controlPoint1: NSPoint(x: -0.4, y: 0.9),
-                      controlPoint2: NSPoint(x: 0.4, y: 0.9))
-            paw.curve(to: NSPoint(x: 3.2, y: 0.8),
-                      controlPoint1: NSPoint(x: 2, y: -0.7),
-                      controlPoint2: NSPoint(x: 2.7, y: 0.3))
-            paw.curve(to: NSPoint(x: 3.8, y: 3.4),
-                      controlPoint1: NSPoint(x: 4, y: 1.4),
-                      controlPoint2: NSPoint(x: 4.4, y: 2.7))
-            paw.curve(to: NSPoint(x: 1.8, y: 4.8),
-                      controlPoint1: NSPoint(x: 3.1, y: 4.6),
-                      controlPoint2: NSPoint(x: 2.6, y: 5.2))
-            paw.curve(to: NSPoint(x: -1.8, y: 4.8),
-                      controlPoint1: NSPoint(x: 0.7, y: 3.3),
-                      controlPoint2: NSPoint(x: -0.7, y: 3.3))
-            paw.curve(to: NSPoint(x: -3.8, y: 3.4),
-                      controlPoint1: NSPoint(x: -2.6, y: 5.2),
-                      controlPoint2: NSPoint(x: -3.1, y: 4.6))
-            paw.close()
+            NSBezierPath(ovalIn: NSRect(x: unitX, y: unitY,
+                                       width: 22 * unitX, height: 22 * unitY)).fill()
 
-            NSGraphicsContext.current?.compositingOperation = .destinationOut
-            NSColor.white.withAlphaComponent(0.42).setFill()
-            for (center, scale, angle) in [
-                (NSPoint(x: 9.6, y: 13.7), CGFloat(1), CGFloat(-18)),
-                (NSPoint(x: 16.7, y: 7.3), CGFloat(0.55), CGFloat(18))
-            ] {
-                NSGraphicsContext.saveGraphicsState()
-                let placement = NSAffineTransform()
-                placement.translateX(by: center.x, yBy: center.y)
-                placement.rotate(byDegrees: angle)
-                placement.scale(by: scale)
-                placement.concat()
-                paw.fill()
-                NSGraphicsContext.restoreGraphicsState()
+            // Draw at the final size so the system keeps the paw's edges crisp.
+            let configuration = NSImage.SymbolConfiguration(
+                pointSize: 13 * min(unitX, unitY), weight: .regular)
+            guard let paw = NSImage(systemSymbolName: "pawprint.fill", accessibilityDescription: nil)?
+                .withSymbolConfiguration(configuration) else {
+                preconditionFailure("Unavailable moon symbol: pawprint.fill")
             }
+            let placement = NSAffineTransform()
+            placement.translateX(by: size.width / 2, yBy: size.height / 2)
+            placement.rotate(byDegrees: -10)
+            placement.translateX(by: -size.width / 2, yBy: -size.height / 2)
+            placement.concat()
+            paw.draw(in: NSRect(x: 5.5 * unitX, y: 5.5 * unitY,
+                                width: 13 * unitX, height: 13 * unitY),
+                     from: .zero, operation: .destinationOut, fraction: 0.4,
+                     respectFlipped: true, hints: nil)
             return true
         }
         image.isTemplate = true

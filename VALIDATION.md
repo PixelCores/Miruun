@@ -27,6 +27,10 @@
 
 本次 Release 编译、plist 与压缩包检查通过，无 warning/error；同一源码另按 macOS 13 deployment target 编译，生成 18pt、28pt 和放大预览并检查可辨识度。最终应用 `dist/20261005-110714-paw-moon/Miruun.app` 已实际运行，浮窗月球中的猫爪显示正常；原守护启用与自动打开关闭保持，就绪且没有待启动请求。预览为 `/private/tmp/miruun-paw-logo-preview.png`，运行截图为 `/private/tmp/miruun-paw-moon-ui.png`，应用压缩包为 `/private/tmp/Miruun-paw-moon.zip`，Release 日志为 `/private/tmp/miruun-paw-moon-release.log`。纯图标修改未重复未受影响的核心 XCTest；未额外修改用户配置或发送真实回合。
 
+同日按用户进一步要求，最终收拢为一枚居中、倾斜 10° 的猫爪，增加均衡留白并使用原生 `pawprint.fill` 的圆润轮廓。图案按最终尺寸绘制，避免放大时因归一化缩放产生模糊；月面仍使用模板 alpha，菜单栏与浮窗共用同一图案。本机 Apple `CoreGlyphs.bundle` 的 symbol availability 记录确认该符号自 macOS 12 提供，符合 macOS 13 最低版本。
+
+最终单爪版本 Release 重编译与 macOS 13 target 预览编译通过，无 warning/error；18pt、28pt 与放大图案边缘清晰。应用 `dist/20261005-111547-single-paw-moon/Miruun.app` 已实际启动，爪印显示正常，守护启用、自动打开关闭、配置就绪保持。预览为 `/private/tmp/miruun-single-paw-logo-preview.png`，实际截图为 `/private/tmp/miruun-single-paw-moon-ui.png`，压缩包为 `/private/tmp/Miruun-single-paw-moon.zip`，Release 日志为 `/private/tmp/miruun-single-paw-moon-release.log`。plist、压缩包内容与执行权限均已核对；没有改变启动或配置处理逻辑。
+
 ## 已合并：参考图深色菜单栏浮窗
 
 日期：2026 年 10 月 3 日。沿用启动入口分支及 `main@1a43f2dae5fee5ce7d4fbebc60a9fe4872747d4d` 基线，源码版本未变。
