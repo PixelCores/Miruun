@@ -23,13 +23,7 @@
 
 后续按用户要求，将菜单栏与浮窗的土星统一换为月球：共用 `moonImage` 矢量绘图，以 alpha 层次呈现月面凹坑；菜单栏为 18 × 18 pt，浮窗为 28 × 28 pt。仅修改图标绘制、两处调用和对应文案，没有新增资源或实体。Release 重编译与 plist 检查通过，实际运行 `dist/20261003-212845-moon/Miruun.app`，浮窗月球显示正常；原守护及自动打开偏好保持，当前就绪。截图为 `/private/tmp/miruun-moon-ui.png`，压缩包为 `/private/tmp/Miruun-glass-moon.zip`。本次纯图标修改未重复运行未受影响的核心 XCTest，前述 124 项证据保留；Release 日志为 `/private/tmp/miruun-moon-release.log`。
 
-2026 年 10 月 5 日，进一步将月面凹坑改为一大一小两枚猫爪印，四颗椭圆脚趾与三瓣肉垫沿斜向排列，沿用 `moonImage` 的模板透明度与菜单栏/浮窗共用绘图。主图案保留脚趾间隙和月缘留白，小图案作为辅助纹理。仅修改现有图标绘图与品牌说明。
-
-本次 Release 编译、plist 与压缩包检查通过，无 warning/error；同一源码另按 macOS 13 deployment target 编译，生成 18pt、28pt 和放大预览并检查可辨识度。最终应用 `dist/20261005-110714-paw-moon/Miruun.app` 已实际运行，浮窗月球中的猫爪显示正常；原守护启用与自动打开关闭保持，就绪且没有待启动请求。预览为 `/private/tmp/miruun-paw-logo-preview.png`，运行截图为 `/private/tmp/miruun-paw-moon-ui.png`，应用压缩包为 `/private/tmp/Miruun-paw-moon.zip`，Release 日志为 `/private/tmp/miruun-paw-moon-release.log`。纯图标修改未重复未受影响的核心 XCTest；未额外修改用户配置或发送真实回合。
-
-同日按用户进一步要求，最终收拢为一枚居中、倾斜 10° 的猫爪，增加均衡留白并使用原生 `pawprint.fill` 的圆润轮廓。图案按最终尺寸绘制，避免放大时因归一化缩放产生模糊；月面仍使用模板 alpha，菜单栏与浮窗共用同一图案。本机 Apple `CoreGlyphs.bundle` 的 symbol availability 记录确认该符号自 macOS 12 提供，符合 macOS 13 最低版本。
-
-最终单爪版本 Release 重编译与 macOS 13 target 预览编译通过，无 warning/error；18pt、28pt 与放大图案边缘清晰。应用 `dist/20261005-111547-single-paw-moon/Miruun.app` 已实际启动，爪印显示正常，守护启用、自动打开关闭、配置就绪保持。预览为 `/private/tmp/miruun-single-paw-logo-preview.png`，实际截图为 `/private/tmp/miruun-single-paw-moon-ui.png`，压缩包为 `/private/tmp/Miruun-single-paw-moon.zip`，Release 日志为 `/private/tmp/miruun-single-paw-moon-release.log`。plist、压缩包内容与执行权限均已核对；没有改变启动或配置处理逻辑。
+2026 年 10 月 5 日，按用户要求恢复加猫爪前的原版月球 Logo。`MenuPanelView.swift` 与 `e0841c3` 逐字节一致，移除尚未提交的生成图像及打包接入，保留毛玻璃与核心操作界面。本次 Release 重编译通过，无 warning/error；plist 和压缩包内容及执行权限检查通过。实际运行 `dist/20261005-114748-original-moon/Miruun.app`，确认原版月面凹坑显示正常，守护启用、自动打开关闭、配置就绪保持。截图为 `/private/tmp/miruun-original-moon-ui.png`，压缩包为 `/private/tmp/Miruun-original-moon.zip`，Release 日志为 `/private/tmp/miruun-original-moon-release.log`。纯 Logo 恢复未重复运行未受影响的核心 XCTest，前述 124 项证据保留。
 
 ## 已合并：参考图深色菜单栏浮窗
 

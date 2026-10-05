@@ -115,28 +115,24 @@ final class MenuPanelView: NSView {
         let image = NSImage(size: size, flipped: true) { _ in
             NSGraphicsContext.saveGraphicsState()
             defer { NSGraphicsContext.restoreGraphicsState() }
-            let unitX = size.width / 24
-            let unitY = size.height / 24
-            NSColor.white.setFill()
-            NSBezierPath(ovalIn: NSRect(x: unitX, y: unitY,
-                                       width: 22 * unitX, height: 22 * unitY)).fill()
+            let scale = NSAffineTransform()
+            scale.scaleX(by: size.width / 24, yBy: size.height / 24)
+            scale.concat()
 
-            // Draw at the final size so the system keeps the paw's edges crisp.
-            let configuration = NSImage.SymbolConfiguration(
-                pointSize: 13 * min(unitX, unitY), weight: .regular)
-            guard let paw = NSImage(systemSymbolName: "pawprint.fill", accessibilityDescription: nil)?
-                .withSymbolConfiguration(configuration) else {
-                preconditionFailure("Unavailable moon symbol: pawprint.fill")
+            NSColor.white.setFill()
+            NSBezierPath(ovalIn: NSRect(x: 1, y: 1, width: 22, height: 22)).fill()
+            // Alpha shading keeps the lunar craters visible in both template tints.
+            NSGraphicsContext.current?.compositingOperation = .destinationOut
+            NSColor.white.withAlphaComponent(0.28).setFill()
+            for crater in [
+                NSRect(x: 6, y: 5, width: 4, height: 4),
+                NSRect(x: 13, y: 6, width: 3, height: 3),
+                NSRect(x: 8, y: 12, width: 5, height: 4),
+                NSRect(x: 15, y: 14, width: 3, height: 4),
+                NSRect(x: 4.5, y: 11, width: 2, height: 2)
+            ] {
+                NSBezierPath(ovalIn: crater).fill()
             }
-            let placement = NSAffineTransform()
-            placement.translateX(by: size.width / 2, yBy: size.height / 2)
-            placement.rotate(byDegrees: -10)
-            placement.translateX(by: -size.width / 2, yBy: -size.height / 2)
-            placement.concat()
-            paw.draw(in: NSRect(x: 5.5 * unitX, y: 5.5 * unitY,
-                                width: 13 * unitX, height: 13 * unitY),
-                     from: .zero, operation: .destinationOut, fraction: 0.4,
-                     respectFlipped: true, hints: nil)
             return true
         }
         image.isTemplate = true
