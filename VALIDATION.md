@@ -1,6 +1,50 @@
 # Miruun 验证记录
 
-## 未发布：参考图深色菜单栏浮窗
+## 未发布：半透明玻璃、守护开关与配置目录发现
+
+日期：2026 年 10 月 5 日。沿用 `main@d78f7fa78c4f4297c4cc99c0e2bc86eeab1891cd` 与 `codex/glass-core-panel` 分支；源码版本未变。
+
+当前首页仅保留 Miruun 标题、实际状态入口、原生 `NSSwitch` 连续性守护及底部设置/退出；移除首页“打开 Codex”按钮与蓝色底板，手动启动保留在应用菜单中。移除副标题、自动打开选项及首次启动/reopen 的自动请求，清理旧 `autoOpenCodex` 偏好。原版月球保留；首页缩为 332 × 246 pt，设置与完整状态仍为 332 × 350 pt，窗口、遮罩和底部按钮同步按页尺寸更新。
+
+设置显示自动发现的 Codex/Claude 全局配置目录。发现复用 worker 与有界登录 shell，只获取两个目录变量并检查文件元数据；默认结果不永久固定，非默认旧路径迁移为手选。显式无效路径、链接和 shell 失败可观察；目录未确定前禁用守护和启动，维护中不替换目录，退出阻止发现回调再次开启守护。Claude 仅发现并展示目录。
+
+| 验证 | 结果 |
+| --- | --- |
+| 目录发现提交 XCTest | `8d53beb` 的 136 项通过，0 失败（BridgeEngine 123、BridgeCore 13），日志 `/private/tmp/miruun-directory-switch-final-tests.log`；本轮仅移除首页按钮并调整布局，未重复运行未受影响的核心测试 |
+| 目录回归 | 新增 12 项合成测试，覆盖默认/缺失/自定义路径、shell 合并与 unset、无效覆盖不回退、链接、手动优先及畸形记录；独立复核发现的分隔符截断问题已修复并补回归 |
+| Release 与打包 | 移除首页按钮后重编译通过，无 warning/error；plist、压缩包内容与可执行权限检查通过，日志 `/private/tmp/miruun-guard-only-release.log` |
+| 实际 GUI | 最新首页已无“打开 Codex”按钮，664 × 492 px；设置与状态页为 664 × 700 px，返回恢复紧凑首页，遮罩、文字与底部控件无裁切。目录发现提交曾验证开关启停、暂停后自动查找及目录面板取消，原路径保持 |
+| 最终包 | 实际运行 `dist/20261005-121828-guard-only/Miruun.app`，启动只显示面板，没有待启动请求；发现 `/Users/pixelkernel/.codex` 和 `/Users/pixelkernel/.claude`，守护启用、配置就绪及登录项已选状态保持 |
+| 独立复核 | 所选 Codex URL 同时用于守护与手动启动；删除自动请求后稳定采样和 UUID 取消链保留，未发现未解决问题 |
+
+最新截图为 `/private/tmp/miruun-guard-only-overview-ui.png`、`/private/tmp/miruun-guard-only-settings-ui.png` 与 `/private/tmp/miruun-guard-only-status-ui.png`，应用包为 `/private/tmp/Miruun-guard-only.zip`。本次没有关闭当前 Codex、发送真实回合或读取历史数据库；没有更改登录项注册。真实客户端冷启动与其他系统版本仍未额外验收。
+
+### 初版玻璃界面验收
+
+日期：2026 年 10 月 3 日。基于已合并 PR #2 的 `main@d78f7fa78c4f4297c4cc99c0e2bc86eeab1891cd`，在独立工作树的 `codex/glass-core-panel` 分支实现；源码版本未变。
+
+浮窗改为 332 × 350 pt，使用 `NSVisualEffectView` 的 `.popover`、`.behindWindow` 与原生暗色外观合成毛玻璃，背景和前景共用圆角与箭头 mask。去掉八个快捷图标、模拟滑轨与重复状态行；概览保留连续性守护、自动打开、实际状态入口和主要“打开 Codex”按钮。设置、配置备份、目录选择、登录项和完整状态仍可访问。
+
+| 验证 | 结果 |
+| --- | --- |
+| XCTest | 124 项通过，0 失败（BridgeEngine 111、BridgeCore 13），未修改核心源码或测试 |
+| Release 与打包 | 最终原生背景/透明前景拆分后重新编译通过，无 warning/error；plist 校验通过；相关 UI 源码另按 macOS 13 deployment target 类型检查通过 |
+| 最终 GUI | 664 × 700 px（Retina 2×），对应 332 × 350 pt；土星、箭头、玻璃卡片、原生控件、设置和返回正常绘制，文字可读 |
+| 等待与取消 | 已有 Codex 活动时启动入口进入等待并禁用，完整状态说明可读；Esc 收起后用 `⌘,` 打开设置，等待保留；暂停取消，重新启用恢复就绪 |
+| 偏好与目录 | 自动打开开/关与显示一致；守护启用时禁止选择目录，暂停时可打开目录面板，取消后原路径不变；登录项的已选状态和可访问名称保持 |
+| 独立静态复核 | 背景/前景持有关系无循环，arrow 更新重建 mask；worker、稳定采样、启动事务、UUID 取消和退出保持原样；隐藏与菜单 tracking 保护保留 |
+
+首次预览发现 `NSVisualEffectView` 子类自绘内容未显示，改由系统背景承载透明的既有 `MenuPanelView` 前景，最终包已实际复核。全量测试日志为 `/private/tmp/miruun-glass-build.log`，最终 Release 日志为 `/private/tmp/miruun-glass-final-release.log`。应用为 `dist/20261003-210537-glass/Miruun.app`，压缩包为 `/private/tmp/Miruun-glass-core.zip`。截图为 `/private/tmp/miruun-glass-ui.png` 与 `/private/tmp/miruun-glass-settings-ui.png`。
+
+验证后恢复本次开始时的守护启用、自动打开关闭、登录项已选状态，验证用待启动请求已取消。没有关闭当前 Codex、发送真实回合或读取历史数据库；临时彩色背景页及本地服务已关闭。
+
+界面边界：目标窗口截图不包含其他窗口，无法据此证明桌面背景的实际采样颜色；原生材质属性与本机“降低透明度”关闭状态已核对，最终背景融合仍需用户在实际桌面上查看。未完成 VoiceOver、其他屏幕/系统版本、签名或公证验收；真实冷启动及两种模式往返续聊仍遵循后面的记录。
+
+后续按用户要求，将菜单栏与浮窗的土星统一换为月球：共用 `moonImage` 矢量绘图，以 alpha 层次呈现月面凹坑；菜单栏为 18 × 18 pt，浮窗为 28 × 28 pt。仅修改图标绘制、两处调用和对应文案，没有新增资源或实体。Release 重编译与 plist 检查通过，实际运行 `dist/20261003-212845-moon/Miruun.app`，浮窗月球显示正常；原守护及自动打开偏好保持，当前就绪。截图为 `/private/tmp/miruun-moon-ui.png`，压缩包为 `/private/tmp/Miruun-glass-moon.zip`。本次纯图标修改未重复运行未受影响的核心 XCTest，前述 124 项证据保留；Release 日志为 `/private/tmp/miruun-moon-release.log`。
+
+2026 年 10 月 5 日，按用户要求恢复加猫爪前的原版月球 Logo。`MenuPanelView.swift` 与 `e0841c3` 逐字节一致，移除尚未提交的生成图像及打包接入，保留毛玻璃与核心操作界面。本次 Release 重编译通过，无 warning/error；plist 和压缩包内容及执行权限检查通过。实际运行 `dist/20261005-114748-original-moon/Miruun.app`，确认原版月面凹坑显示正常，守护启用、自动打开关闭、配置就绪保持。截图为 `/private/tmp/miruun-original-moon-ui.png`，压缩包为 `/private/tmp/Miruun-original-moon.zip`，Release 日志为 `/private/tmp/miruun-original-moon-release.log`。纯 Logo 恢复未重复运行未受影响的核心 XCTest，前述 124 项证据保留。
+
+## 已合并：参考图深色菜单栏浮窗
 
 日期：2026 年 10 月 3 日。沿用启动入口分支及 `main@1a43f2dae5fee5ce7d4fbebc60a9fe4872747d4d` 基线，源码版本未变。
 
@@ -22,7 +66,7 @@
 
 界面边界：外部点击与失活收起经过静态复核，未单独取得全局点击的运行证据；没有执行系统登录项注册，也未完成 VoiceOver 或其他屏幕/系统版本验收。核心启动入口的真实冷启动与两种模式往返续聊仍遵循下方记录的未验收边界。
 
-## 未发布：启动前自动准备接入配置
+## 已合并：启动前自动准备接入配置
 
 日期：2026 年 10 月 3 日。基于 `main@1a43f2dae5fee5ce7d4fbebc60a9fe4872747d4d`；本次不调整应用版本号。
 
