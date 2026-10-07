@@ -4,20 +4,29 @@ import BridgeEngine
 
 /// UI state stays on the main queue. All configuration access is serialized on
 /// worker; stopping waits for any in-progress atomic update before returning.
-final class MenuAppDelegate: NSObject, NSApplicationDelegate {
+final class MenuAppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTableViewDelegate {
     private let worker = DispatchQueue(label: "io.github.pixelcores.miruun.continuity", qos: .utility)
     private let historyWorker = DispatchQueue(label: "io.github.pixelcores.miruun.history", qos: .utility)
     private var historyTimer: Timer? // main queue only; file work uses historyWorker
-    private var historyBusy = false
+    private enum HistoryOperation { case loading, backingUp, exporting }
+    private var historyOperation: HistoryOperation?
+    private var historyBusy: Bool { historyOperation != nil }
     private var historyError: String?
     private var historySnapshots: [CodexHistoryBackup.Snapshot] = []
-    private let historyButton = NSButton(title: "查看备份与版本", target: nil, action: nil)
+    private let historyButton = NSButton(title: "", target: nil, action: nil)
     private let historyToggle = NSSwitch(frame: .zero)
     private let historyPageToggle = NSSwitch(frame: .zero)
     private let historyInterval = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let historyVersions = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let historyVersions = NSTableView()
+    private let historyCount = NSTextField(labelWithString: "0 个版本")
+    private let historyEmpty = NSTextField(wrappingLabelWithString: "尚无历史版本\n完成首次备份后将在这里显示。")
+    private static let historyDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy/MM/dd HH:mm:ss"
+        return formatter
+    }()
     private let historyNow = NSButton(title: "立即备份", target: nil, action: nil)
-    private let historyExport = NSButton(title: "导出所选版本…", target: nil, action: nil)
+    private let historyExport = NSButton(title: "导出所选…", target: nil, action: nil)
     private let historyStatus = NSTextField(wrappingLabelWithString: "尚未备份")
     private var historyViews: [NSView] = []
     private var timer: DispatchSourceTimer? // worker queue only
@@ -120,8 +129,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func refreshMoonAnimation() {
-        let working = enabled || UserDefaults.standard.bool(forKey: "historyBackupEnabled")
-        let animate = working && !terminating && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let animate = historyOperation == .backingUp && !terminating && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         guard animate else {
             if moonAnimationTimer != nil {
                 moonAnimationTimer?.invalidate()
@@ -130,8 +138,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
             }
             return
         }
-        // Routine status refreshes and switching between enabled services must
-        // preserve the phase of the existing animation.
+        // Status refreshes during the same backup preserve the animation phase.
         guard moonAnimationTimer == nil else { return }
         moonAnimationStart = ProcessInfo.processInfo.systemUptime
         statusItem.button?.image = eclipseFrames[0]
@@ -195,7 +202,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         panelView.addSubview(enableButton)
         overviewViews.append(enableButton)
 
-        let backupTitle = makeLabel("聊天与记忆备份", frame: NSRect(x: 30, y: 221, width: 190, height: 19), size: 12, weight: .semibold)
+        let backupTitle = makeLabel("聊天与记忆备份", frame: NSRect(x: 30, y: 221, width: 92, height: 19), size: 12, weight: .semibold)
         backupTitle.textColor = MenuPanelView.color(0xF4F7FA)
         let backupCaption = makeLabel("定时保存本地历史版本", frame: NSRect(x: 30, y: 247, width: 190, height: 14), size: 10, weight: .regular)
         for label in [backupTitle, backupCaption] { panelView.addSubview(label); overviewViews.append(label) }
@@ -206,14 +213,16 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         panelView.addSubview(historyToggle)
         overviewViews.append(historyToggle)
 
-        historyButton.frame = NSRect(x: 26, y: 290, width: 280, height: 20)
+        historyButton.frame = NSRect(x: 122, y: 217, width: 26, height: 26)
         historyButton.isBordered = false
-        historyButton.font = .systemFont(ofSize: 11, weight: .medium)
-        historyButton.alignment = .left
+        historyButton.imagePosition = .imageOnly
+        historyButton.image = NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: nil)
+        historyButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
         historyButton.contentTintColor = MenuPanelView.color(0xC9D2DD)
+        historyButton.setAccessibilityLabel("备份历史与设置")
+        historyButton.toolTip = "查看备份历史与设置"
         historyButton.target = self
         historyButton.action = #selector(showHistoryBackups)
-        historyButton.image = NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: nil)
         panelView.addSubview(historyButton)
         overviewViews.append(historyButton)
 
@@ -326,6 +335,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         for view in settingsViews { view.isHidden = page != 1 }
         for view in statusViews { view.isHidden = page != 2 }
         for view in historyViews { view.isHidden = page != 3 }
+        historyEmpty.isHidden = page != 3 || !historySnapshots.isEmpty
         sectionLabel.stringValue = page == 0 ? "Miruun" : page == 1 ? "设置" : page == 2 ? "连接状态" : "聊天与记忆备份"
         configureFooter(settingsButton, label: page == 0 ? "设置" : "返回")
     }
@@ -411,9 +421,8 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         isDiscovering = true
         historyTimer?.invalidate(); historyTimer = nil
         selectedHome = nil
-        historySnapshots = []
         historyError = nil
-        historyVersions.removeAllItems()
+        updateHistoryVersions([])
         homeField.stringValue = "正在查找…"
         claudeHomeField.stringValue = "正在查找…"
         refreshControls()
@@ -512,8 +521,9 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         discoverButton.isEnabled = chooseButton.isEnabled
         let canOpen = enabled && !transitioning && launchRequest == nil
         for item in openItems { item.isEnabled = canOpen }
-        let canBackup = !transitioning && !isDiscovering && !historyBusy && selectedHome != nil
+        let canBackup = !terminating && !transitioning && !isDiscovering && !historyBusy && selectedHome != nil
         historyNow.isEnabled = canBackup
+        historyNow.title = historyOperation == .backingUp ? "正在备份…" : "立即备份"
         let automatic = UserDefaults.standard.bool(forKey: "historyBackupEnabled")
         historyToggle.state = automatic ? .on : .off
         historyPageToggle.state = historyToggle.state
@@ -521,7 +531,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         historyPageToggle.isEnabled = historyToggle.isEnabled
         historyInterval.isEnabled = !terminating && !isDiscovering
         historyVersions.isEnabled = canBackup && !historySnapshots.isEmpty
-        historyExport.isEnabled = canBackup && historyVersions.indexOfSelectedItem >= 0 && !historySnapshots.isEmpty
+        historyExport.isEnabled = canBackup && historySnapshots.indices.contains(historyVersions.selectedRow)
         refreshMoonAnimation()
 
     }
@@ -676,14 +686,15 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func makeHistoryControls() {
-        let caption = makeLabel("所选 Codex 目录中的本地记录", frame: NSRect(x: 30, y: 88, width: 272, height: 18), size: 11, weight: .medium)
-        let intervalLabel = makeLabel("定时备份", frame: NSRect(x: 30, y: 120, width: 95, height: 20), size: 12, weight: .medium)
-        historyPageToggle.frame = NSRect(x: 252, y: 113, width: 42, height: 26)
+        let intervalLabel = makeLabel("定时备份", frame: NSRect(x: 30, y: 94, width: 78, height: 18), size: 11, weight: .medium)
+        historyPageToggle.frame = NSRect(x: 252, y: 88, width: 42, height: 26)
         historyPageToggle.target = self
         historyPageToggle.action = #selector(toggleHistoryBackups(_:))
         historyPageToggle.setAccessibilityLabel("定时备份聊天与记忆")
-        historyInterval.frame = NSRect(x: 26, y: 145, width: 280, height: 28)
-        for (title, seconds) in [("每小时备份", 3600), ("每天备份", 86400)] {
+        historyInterval.frame = NSRect(x: 128, y: 87, width: 112, height: 26)
+        historyInterval.controlSize = .small
+        historyInterval.font = .systemFont(ofSize: 11)
+        for (title, seconds) in [("每小时", 3600), ("每天", 86400)] {
             historyInterval.addItem(withTitle: title)
             historyInterval.lastItem?.tag = seconds
         }
@@ -694,32 +705,121 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         historyInterval.setAccessibilityLabel("聊天与记忆定时备份间隔")
         historyNow.target = self
         historyNow.action = #selector(backupHistoryNow)
-        styleButton(historyNow, frame: NSRect(x: 30, y: 184, width: 126, height: 28))
+        styleButton(historyNow, frame: NSRect(x: 30, y: 128, width: 130, height: 26))
+        historyNow.font = .systemFont(ofSize: 11, weight: .medium)
         let reveal = NSButton(title: "打开备份目录", target: self, action: #selector(revealHistoryBackups))
-        styleButton(reveal, frame: NSRect(x: 168, y: 184, width: 134, height: 28))
-        historyVersions.frame = NSRect(x: 26, y: 224, width: 280, height: 28)
-        historyVersions.setAccessibilityLabel("历史备份版本，最新在前")
-        historyVersions.target = self
-        historyVersions.action = #selector(selectHistoryVersion)
+        styleButton(reveal, frame: NSRect(x: 172, y: 128, width: 130, height: 26))
+        reveal.font = .systemFont(ofSize: 11, weight: .medium)
+
+        let versionsLabel = makeLabel("历史版本", frame: NSRect(x: 26, y: 184, width: 60, height: 17), size: 11, weight: .semibold)
+        versionsLabel.textColor = MenuPanelView.color(0xF4F7FA)
+        historyCount.frame = NSRect(x: 84, y: 185, width: 116, height: 16)
+        historyCount.font = .systemFont(ofSize: 10)
+        historyCount.textColor = MenuPanelView.color(0xC9D2DD)
         historyExport.target = self
         historyExport.action = #selector(exportHistoryVersion)
-        styleButton(historyExport, frame: NSRect(x: 30, y: 263, width: 272, height: 28))
-        let scroll = NSScrollView(frame: NSRect(x: 30, y: 304, width: 272, height: 58))
+        styleButton(historyExport, frame: NSRect(x: 212, y: 179, width: 94, height: 24))
+        historyExport.font = .systemFont(ofSize: 10, weight: .medium)
+        historyExport.setAccessibilityLabel("导出所选备份版本")
+
+        let versionsScroll = NSScrollView(frame: NSRect(x: 24, y: 220, width: 284, height: 122))
+        versionsScroll.drawsBackground = false
+        versionsScroll.hasVerticalScroller = true
+        versionsScroll.autohidesScrollers = true
+        versionsScroll.scrollerStyle = .overlay
+        historyVersions.frame = versionsScroll.bounds
+        historyVersions.style = .plain
+        historyVersions.cornerView = nil
+        historyVersions.backgroundColor = .clear
+        historyVersions.rowHeight = 23
+        historyVersions.intercellSpacing = NSSize(width: 4, height: 2)
+        historyVersions.gridStyleMask = .solidHorizontalGridLineMask
+        historyVersions.gridColor = .white.withAlphaComponent(0.06)
+        historyVersions.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        historyVersions.allowsMultipleSelection = false
+        historyVersions.allowsEmptySelection = false
+        historyVersions.allowsColumnReordering = false
+        historyVersions.allowsColumnResizing = false
+        historyVersions.setAccessibilityLabel("历史备份版本，最新在前")
+        for (identifier, title, width) in [("date", "备份时间", 142.0), ("files", "文件", 42.0), ("size", "大小", 84.0)] {
+            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(identifier))
+            column.title = title
+            column.width = width
+            column.headerCell.font = .systemFont(ofSize: 10, weight: .medium)
+            column.headerCell.alignment = identifier == "date" ? .left : .right
+            historyVersions.addTableColumn(column)
+        }
+        historyVersions.dataSource = self
+        historyVersions.delegate = self
+        versionsScroll.documentView = historyVersions
+        historyEmpty.frame = NSRect(x: 30, y: 268, width: 272, height: 40)
+        historyEmpty.font = .systemFont(ofSize: 11)
+        historyEmpty.textColor = MenuPanelView.color(0xC9D2DD)
+        historyEmpty.alignment = .center
+
+        let scroll = NSScrollView(frame: NSRect(x: 30, y: 359, width: 272, height: 38))
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
-        historyStatus.frame = NSRect(x: 0, y: 0, width: 258, height: 58)
+        historyStatus.frame = NSRect(x: 0, y: 0, width: 258, height: 38)
         historyStatus.preferredMaxLayoutWidth = 258
-        historyStatus.font = .systemFont(ofSize: 11)
+        historyStatus.font = .systemFont(ofSize: 10)
         historyStatus.textColor = MenuPanelView.color(0xF4F7FA)
         historyStatus.isSelectable = true
         scroll.documentView = historyStatus
-        let scope = NSTextField(wrappingLabelWithString: "备份保留在本机，包含聊天原文和附件。\n不含云端记录、目录外数据库与登录凭据。")
-        scope.frame = NSRect(x: 30, y: 371, width: 272, height: 34)
-        scope.font = .systemFont(ofSize: 10)
+        let scope = NSTextField(wrappingLabelWithString: "仅备份本机聊天、记忆与附件。\n不含云端记录、目录外数据库和登录凭据。")
+        scope.frame = NSRect(x: 30, y: 402, width: 272, height: 28)
+        scope.font = .systemFont(ofSize: 9)
         scope.textColor = MenuPanelView.color(0xC9D2DD)
-        historyViews = [caption, intervalLabel, historyPageToggle, historyInterval, historyNow, reveal, historyVersions, historyExport, scroll, scope]
+        historyViews = [intervalLabel, historyPageToggle, historyInterval, historyNow, reveal,
+                        versionsLabel, historyCount, historyExport, versionsScroll, historyEmpty, scroll, scope]
         for view in historyViews { panelView.addSubview(view) }
+    }
+
+    func numberOfRows(in tableView: NSTableView) -> Int { historySnapshots.count }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard let column = tableColumn, historySnapshots.indices.contains(row) else { return nil }
+        let snapshot = historySnapshots[row]
+        let cell: NSTableCellView
+        if let reused = tableView.makeView(withIdentifier: column.identifier, owner: self) as? NSTableCellView {
+            cell = reused
+        } else {
+            cell = NSTableCellView()
+            cell.identifier = column.identifier
+            let text = NSTextField(labelWithString: "")
+            text.translatesAutoresizingMaskIntoConstraints = false
+            text.lineBreakMode = .byTruncatingTail
+            cell.addSubview(text)
+            cell.textField = text
+            NSLayoutConstraint.activate([
+                text.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
+                text.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+                text.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
+            ])
+        }
+        let text = cell.textField!
+        text.font = .monospacedDigitSystemFont(ofSize: 10, weight: .regular)
+        text.textColor = MenuPanelView.color(0xF4F7FA)
+        text.alignment = column.identifier.rawValue == "date" ? .left : .right
+        switch column.identifier.rawValue {
+        case "date": text.stringValue = Self.historyDateFormatter.string(from: snapshot.createdAt)
+        case "files": text.stringValue = String(snapshot.files.count)
+        default:
+            let bytes = snapshot.files.reduce(Int64(0)) { $0 + $1.byteCount }
+            text.stringValue = ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+        }
+        cell.toolTip = snapshot.createdAt.formatted(date: .complete, time: .standard) + "\n版本：" + snapshot.id
+        return cell
+    }
+
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+        !historyBusy && !isDiscovering && !terminating
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        selectHistoryVersion()
+        refreshControls()
     }
 
     @objc private func showHistoryBackups() {
@@ -733,47 +833,54 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         let visible = !failed && historyError != nil ? message + "\n最近操作失败：" + historyError! : message
         historyStatus.stringValue = visible
         historyStatus.toolTip = visible
-        let height = historyStatus.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: 258, height: 10_000)).height ?? 58
-        historyStatus.setFrameSize(NSSize(width: 258, height: max(58, height)))
+        let height = historyStatus.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: 258, height: 10_000)).height ?? 38
+        historyStatus.setFrameSize(NSSize(width: 258, height: max(38, height)))
         historyStatus.textColor = historyError != nil ? .systemOrange : MenuPanelView.color(0xF4F7FA)
-        historyButton.title = historyError != nil ? "备份需要处理 · 查看详情" : "查看备份与版本"
-        historyButton.toolTip = historyError ?? message
+        let failed = historyError != nil
+        historyButton.image = NSImage(systemSymbolName: failed ? "exclamationmark.circle" : "clock.arrow.circlepath", accessibilityDescription: nil)
+        historyButton.contentTintColor = failed ? .systemOrange : MenuPanelView.color(0xC9D2DD)
+        historyButton.setAccessibilityLabel(failed ? "备份需要处理，查看详情" : "备份历史与设置")
+        historyButton.toolTip = historyError ?? "查看备份历史与设置\n" + message
     }
 
     private func updateHistoryVersions(_ snapshots: [CodexHistoryBackup.Snapshot]) {
+        let selectedID = historySnapshots.indices.contains(historyVersions.selectedRow)
+            ? historySnapshots[historyVersions.selectedRow].id : nil
         historySnapshots = snapshots
-        historyVersions.removeAllItems()
-        for snapshot in snapshots {
-            historyVersions.addItem(withTitle: snapshot.createdAt.formatted(date: .numeric, time: .standard) + " · " + String(snapshot.id.prefix(8)))
-        }
-        if snapshots.isEmpty { historyVersions.addItem(withTitle: "尚无历史版本") }
+        historyVersions.reloadData()
+        historyEmpty.isHidden = panelView.page != 3 || !snapshots.isEmpty
+        historyCount.stringValue = "\(snapshots.count) 个版本"
+        if !snapshots.isEmpty {
+            let index = snapshots.firstIndex { $0.id == selectedID } ?? 0
+            historyVersions.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+        } else { historyVersions.deselectAll(nil) }
         refreshControls()
     }
 
-    @objc private func selectHistoryVersion() {
-        let index = historyVersions.indexOfSelectedItem
+    private func selectHistoryVersion() {
+        let index = historyVersions.selectedRow
         guard historySnapshots.indices.contains(index) else { return }
         let snapshot = historySnapshots[index]
         let bytes = snapshot.files.reduce(Int64(0)) { $0 + $1.byteCount }
-        setHistoryStatus("版本包含 \(snapshot.files.count) 个文件 · \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))\n导出到新目录后可查看完整文件；不会覆盖当前 Codex。")
+        setHistoryStatus("版本 \(snapshot.id.prefix(8)) · \(snapshot.files.count) 个文件 · \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))\n导出到独立目录，可查看完整文件。")
     }
 
     private func loadHistoryBackups() {
         guard !historyBusy, !transitioning, !isDiscovering, let home = selectedHome else { return }
-        historyBusy = true
+        historyOperation = .loading
         refreshControls()
         historyWorker.async {
             let result = Result { try CodexHistoryBackup.snapshots(home: home, repository: CodexHistoryBackup.defaultRepository) }
             DispatchQueue.main.async {
-                self.historyBusy = false
+                self.historyOperation = nil
                 guard !self.terminating else { return }
                 switch result {
                 case .success(let snapshots):
                     self.updateHistoryVersions(snapshots)
                     if let error = self.historyError {
                         self.setHistoryStatus(error, failed: true)
-                    } else if let latest = snapshots.first {
-                        self.setHistoryStatus("最新版本：" + latest.createdAt.formatted(date: .numeric, time: .standard) + "\n共 \(snapshots.count) 个版本 · \(latest.files.count) 个文件")
+                    } else if !snapshots.isEmpty {
+                        self.selectHistoryVersion()
                     } else { self.setHistoryStatus("尚无备份。选择立即备份或启用定时备份。") }
                     self.configureHistoryTimer()
                 case .failure(let error):
@@ -819,8 +926,8 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func backupHistoryNow() {
-        guard !historyBusy, !transitioning, !isDiscovering, let home = selectedHome else { return }
-        historyBusy = true
+        guard !terminating, !historyBusy, !transitioning, !isDiscovering, !isChoosingHome, let home = selectedHome else { return }
+        historyOperation = .backingUp
         historyError = nil
         UserDefaults.standard.set(Date(), forKey: "historyBackupLastAttempt." + home.path)
         setHistoryStatus("正在备份聊天、记忆与附件…")
@@ -831,7 +938,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
                 return (snapshot, try CodexHistoryBackup.snapshots(home: home, repository: CodexHistoryBackup.defaultRepository))
             }
             DispatchQueue.main.async {
-                self.historyBusy = false
+                self.historyOperation = nil
                 guard !self.terminating else { return }
                 switch result {
                 case .success(let (snapshot, snapshots)):
@@ -851,7 +958,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func exportHistoryVersion() {
-        let index = historyVersions.indexOfSelectedItem
+        let index = historyVersions.selectedRow
         guard !historyBusy, !transitioning, historySnapshots.indices.contains(index) else { return }
         let snapshot = historySnapshots[index]
         isChoosingHome = true
@@ -863,13 +970,13 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         panel.message = "将在这里新建独立文件夹，保留原目录结构，包含聊天与记忆原文。"
         guard panel.runModal() == .OK, let parent = panel.url else { return }
         let destination = parent.appendingPathComponent("Miruun-" + snapshot.id, isDirectory: true)
-        historyBusy = true
+        historyOperation = .exporting
         setHistoryStatus("正在校验并导出所选版本…")
         refreshControls()
         historyWorker.async {
             let result = Result { try CodexHistoryBackup.export(snapshot, repository: CodexHistoryBackup.defaultRepository, destination: destination) }
             DispatchQueue.main.async {
-                self.historyBusy = false
+                self.historyOperation = nil
                 guard !self.terminating else { return }
                 switch result {
                 case .success:

@@ -17,7 +17,7 @@ final class MenuPanelView: NSView {
     private weak var materialView: NSVisualEffectView?
 
     static func contentSize(for page: Int) -> NSSize {
-        NSSize(width: 332, height: page == 0 ? 368 : page == 3 ? 462 : 350)
+        NSSize(width: 332, height: page == 0 ? 332 : page == 3 ? 480 : 350)
     }
 
     var page = 0 {
@@ -88,9 +88,11 @@ final class MenuPanelView: NSView {
             drawContainer(NSRect(x: 16, y: 75, width: 300, height: 28), radius: 14)
             drawContainer(NSRect(x: 16, y: 114, width: 300, height: 78), radius: 12)
             drawContainer(NSRect(x: 16, y: 200, width: 300, height: 78), radius: 12)
-            drawContainer(NSRect(x: 16, y: 284, width: 300, height: 28), radius: 14)
+        } else if page == 3 {
+            drawContainer(NSRect(x: 16, y: 78, width: 300, height: 90), radius: 12)
+            drawContainer(NSRect(x: 16, y: 212, width: 300, height: 138), radius: 10)
         } else {
-            drawContainer(NSRect(x: 16, y: 78, width: 300, height: page == 3 ? 334 : 215), radius: 12)
+            drawContainer(NSRect(x: 16, y: 78, width: 300, height: 215), radius: 12)
             if page == 1 {
                 ("登录 Mac 时启动 Miruun" as NSString).draw(
                     at: NSPoint(x: 51, y: 242), withAttributes: [
