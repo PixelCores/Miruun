@@ -61,7 +61,7 @@ public enum NativeBackup {
             throw NativeStorageError.backupIncomplete
         }
     }
-    private static func backupSQLite(source: URL, destination: URL) throws {
+    static func backupSQLite(source: URL, destination: URL) throws {
         guard sqlite3_libversion_number() >= 3_031_000 else { throw NativeStorageError.backupIncomplete }
         var sourceDB: OpaquePointer?, destinationDB: OpaquePointer?
         guard sqlite3_open_v2(source.path, &sourceDB, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOFOLLOW, nil) == SQLITE_OK else {
