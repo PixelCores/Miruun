@@ -1,20 +1,20 @@
 # Miruun 验证记录
 
-## 未发布：菜单栏月食动画
+## 未发布：微光月球与菜单栏月食动画
 
 日期：2026 年 10 月 7 日。基于 `origin/main@44cc16ecc5ea08e18f8d8bcdc0064a1f5d410ddb`，分支 `feature/lunar-eclipse-status`；源码版本未变。
 
-菜单栏复用原月球绘图与月坑纹理，增加柔和阴影从左至右掠过的 6 秒循环。连续性守护或定时备份任一开关开启时播放，两个开关均关闭时恢复原静态图。复用同一个主线程计时器与缓存帧，状态刷新、服务切换和面板收起不会重置相位。系统启用减少动态效果时停止，退出时停止并移除通知观察者；浮窗页头的月球保持原绘图。
+菜单栏月球使用暖白渐层、柔和月坑和淡冷白光晕，阴影以约 6 秒周期从左至右掠过，月面与光晕渐暗后恢复。连续性守护或定时备份任一开关开启时播放，两个开关均关闭时恢复静态满月。复用同一个主线程计时器与 120 个图像对象，状态刷新、服务切换和面板收起不会重置相位。系统启用减少动态效果时停止，退出时停止并移除通知观察者；浮窗页头保留原单色月球。
 
 | 验证 | 结果 |
 | --- | --- |
-| Release | 使用完整 Xcode 运行 `swift build -c release --disable-sandbox` 通过，无 warning/error；日志 `/private/tmp/miruun-eclipse-release.log` |
-| 实际主循环 | 以当前 `MenuAppDelegate.swift` 原文附临时验证扩展，链接实际 BridgeEngine/BridgeCore 构建产物；12 项检查通过，覆盖两个开关四种组合、完整循环的连续帧变化、刷新及服务切换保留同一 timer/起始时间、静止恢复、重新开启与终止清理；日志 `/private/tmp/miruun-eclipse-validation/results.log` |
-| 绘图 | 编译当前 `MenuPanelView.swift`，输出 18pt 原尺寸和 72pt 放大图，分别在浅色/深色背景按 template alpha 着色；逐像素确认循环两端等于原静态月球，中心保留约 16% alpha，阴影从左向右移动，月坑与轮廓可见 |
-| 动画预览 | `/private/tmp/miruun-eclipse-preview.gif`：120 帧 × 50ms，总计 6 秒；阶段对照图 `/private/tmp/miruun-eclipse-contact.png`；渲染只调用实际绘图函数，没有读取聊天数据 |
-| 独立审查 | 状态 OR、主线程 common run loop、弱捕获、重复调用保相位、退出和减少动态效果通知路径均通过；`git diff --check` 通过 |
+| Release | 使用完整 Xcode 运行 `swift build -c release --disable-sandbox` 通过，无 warning/error；日志 `/private/tmp/miruun-lunar-glow-release.log` |
+| 实际主循环 | 以当前 `MenuAppDelegate.swift` 原文附临时验证扩展，链接实际 BridgeEngine/BridgeCore 构建产物；14 项检查通过，覆盖两个开关四种组合、完整循环的连续帧变化、刷新及服务切换保留同一 timer/起始时间、静止恢复、重新开启、终止清理，以及菜单栏保留颜色/页头保持 template；日志 `/private/tmp/miruun-lunar-glow-validation/results.log` |
+| 绘图 | 编译当前 `MenuPanelView.swift`，输出 18/36/72px 各 121 帧；浅色、深色和蓝色选中背景按实际 RGBA 合成检查。363 帧中心 alpha 均为 255；循环两端与静态满月逐像素相同；月面亮度约为 226 → 53 → 226，最暗时仍可见轮廓，光晕边缘接近透明 |
+| 动画预览 | `/private/tmp/miruun-lunar-glow-preview.gif`：120 帧 × 50ms，总计 6 秒；阶段对照图 `/private/tmp/miruun-lunar-glow-contact.png`；只调用实际绘图函数，没有读取聊天数据 |
+| 独立审查 | 状态 OR、主线程 common run loop、弱捕获、重复调用保相位、退出和减少动态效果通知路径均通过；本轮复核非 template 颜色、不透明月面叠色、光晕边界、首尾连续性及三种背景下观感，无未解决问题；`git diff --check` 通过 |
 
-本次只改 UI 动画与文档，没有改动守护或备份引擎。验证仅创建临时状态图标、使用进程内易失偏好，不启动守护或备份、不读取真实 Codex 数据，也未替换当前运行的 Miruun。已测试辅助功能通知在设置未变化时保留相位，未切换用户系统的减少动态效果设置；真实设置切换、其他屏幕刷新率与长期功耗未进行运行验收。
+本次只改 UI 动画与文档，没有改动守护或备份引擎。验证仅创建临时状态图标、使用进程内易失偏好，不启动守护或备份、不读取真实 Codex 数据，也未替换当前运行的 Miruun。已测试辅助功能通知在设置未变化时保留相位，未切换用户系统的减少动态效果设置；真实设置切换、不同桌面背景与系统高亮的实际合成、其他屏幕刷新率与长期功耗未进行运行验收。
 
 ## 未发布：聊天与记忆的本地版本备份
 

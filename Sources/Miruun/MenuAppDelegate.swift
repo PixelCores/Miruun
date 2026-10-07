@@ -27,7 +27,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
     private var moonAnimationTimer: Timer? // main run loop only
     private var moonAnimationStart: TimeInterval = 0
     private lazy var eclipseFrames = (0..<120).map {
-        MenuPanelView.moonImage(eclipseProgress: Double($0) / 120)
+        MenuPanelView.menuMoonImage(eclipseProgress: Double($0) / 120)
     }
     private var window: MenuPanel!
     private var panelView: MenuPanelView!
@@ -112,7 +112,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         applicationMenu.autoenablesItems = false
         NSApp.mainMenu = mainMenu
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.image = MenuPanelView.moonImage()
+        statusItem.button?.image = MenuPanelView.menuMoonImage()
         statusItem.button?.target = self
         statusItem.button?.action = #selector(toggleWindow)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(refreshMoonAnimation),
@@ -126,7 +126,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
             if moonAnimationTimer != nil {
                 moonAnimationTimer?.invalidate()
                 moonAnimationTimer = nil
-                statusItem.button?.image = MenuPanelView.moonImage()
+                statusItem.button?.image = MenuPanelView.menuMoonImage()
             }
             return
         }

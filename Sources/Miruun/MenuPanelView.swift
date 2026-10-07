@@ -115,7 +115,7 @@ final class MenuPanelView: NSView {
                 blue: CGFloat(hex & 0xff) / 255, alpha: 1)
     }
 
-    static func moonImage(size: NSSize = NSSize(width: 18, height: 18), eclipseProgress: Double? = nil) -> NSImage {
+    static func moonImage(size: NSSize = NSSize(width: 18, height: 18)) -> NSImage {
         let image = NSImage(size: size, flipped: true) { _ in
             NSGraphicsContext.saveGraphicsState()
             defer { NSGraphicsContext.restoreGraphicsState() }
@@ -128,36 +128,79 @@ final class MenuPanelView: NSView {
             // Alpha shading keeps the lunar craters visible in both template tints.
             NSGraphicsContext.current?.compositingOperation = .destinationOut
             NSColor.white.withAlphaComponent(0.28).setFill()
-            for crater in [
-                NSRect(x: 6, y: 5, width: 4, height: 4),
-                NSRect(x: 13, y: 6, width: 3, height: 3),
-                NSRect(x: 8, y: 12, width: 5, height: 4),
-                NSRect(x: 15, y: 14, width: 3, height: 4),
-                NSRect(x: 4.5, y: 11, width: 2, height: 2)
-            ] {
+            for crater in moonCraters {
                 NSBezierPath(ovalIn: crater).fill()
-            }
-            if let eclipseProgress {
-                // A soft shadow crosses the disk, then clears it entirely at both
-                // ends of the loop. Keep a faint silhouette even at totality.
-                let progress = min(max(eclipseProgress, 0), 1)
-                let travel = (1 - cos(progress * .pi)) / 2
-                let center = NSPoint(x: -27 + 78 * travel, y: 12)
-                guard let shadow = NSGradient(colorsAndLocations:
-                    (NSColor.white.withAlphaComponent(0.84), 0),
-                    (NSColor.white.withAlphaComponent(0.84), 0.52),
-                    (NSColor.white.withAlphaComponent(0.42), 0.82),
-                    (NSColor.white.withAlphaComponent(0), 1)) else {
-                    preconditionFailure("Unable to create the lunar shadow gradient")
-                }
-                // Template images use alpha, so the shadow follows the system's
-                // menu-bar tint in light, dark, and highlighted appearances.
-                shadow.draw(fromCenter: center, radius: 0, toCenter: center, radius: 26, options: [])
             }
             return true
         }
         image.isTemplate = true
         return image
+    }
+
+    private static let moonCraters = [
+        NSRect(x: 6, y: 5, width: 4, height: 4),
+        NSRect(x: 13, y: 6, width: 3, height: 3),
+        NSRect(x: 8, y: 12, width: 5, height: 4),
+        NSRect(x: 15, y: 14, width: 3, height: 4),
+        NSRect(x: 4.5, y: 11, width: 2, height: 2)
+    ]
+
+    static func menuMoonImage(size: NSSize = NSSize(width: 18, height: 18), eclipseProgress: Double? = nil) -> NSImage {
+        NSImage(size: size, flipped: true) { _ in
+            NSGraphicsContext.saveGraphicsState()
+            defer { NSGraphicsContext.restoreGraphicsState() }
+            let scale = NSAffineTransform()
+            scale.scaleX(by: size.width / 24, yBy: size.height / 24)
+            scale.concat()
+
+            let progress = min(max(eclipseProgress ?? 0, 0), 1)
+            let travel = (1 - cos(progress * .pi)) / 2
+            let shadowCenter = NSPoint(x: -27 + 78 * travel, y: 12)
+            let glow = 1 - 0.8 * pow(sin(progress * .pi), 4)
+            guard let halo = NSGradient(colorsAndLocations:
+                (color(0xe3ecff).withAlphaComponent(0.24 * glow), 0),
+                (color(0xe3ecff).withAlphaComponent(0.08 * glow), 0.45),
+                (color(0xe3ecff).withAlphaComponent(0), 1)),
+                let surface = NSGradient(colorsAndLocations:
+                (color(0xfff7df), 0), (color(0xe2e0d5), 0.55), (color(0x9ba3a8), 1)),
+                let crater = NSGradient(colorsAndLocations:
+                (color(0x52616c).withAlphaComponent(0.18), 0),
+                (color(0x52616c).withAlphaComponent(0.11), 0.5),
+                (color(0x52616c).withAlphaComponent(0), 1)),
+                let shadow = NSGradient(colorsAndLocations:
+                (color(0x161e2c).withAlphaComponent(0.88), 0),
+                (color(0x161e2c).withAlphaComponent(0.88), 0.52),
+                (color(0x161e2c).withAlphaComponent(0.44), 0.82),
+                (color(0x161e2c).withAlphaComponent(0), 1)) else {
+                preconditionFailure("Unable to create the lunar gradients")
+            }
+            // Keep the entire halo inside the 18 pt image, including its fade to zero.
+            halo.draw(fromCenter: NSPoint(x: 12, y: 12), radius: 9.5,
+                      toCenter: NSPoint(x: 12, y: 12), radius: 12, options: [])
+            let disk = NSBezierPath(ovalIn: NSRect(x: 2, y: 2, width: 20, height: 20))
+            NSGraphicsContext.saveGraphicsState()
+            disk.addClip()
+            surface.draw(fromCenter: NSPoint(x: 8, y: 7), radius: 0,
+                         toCenter: NSPoint(x: 12, y: 12), radius: 15,
+                         options: [.drawsBeforeStartingLocation, .drawsAfterEndingLocation])
+            for bounds in moonCraters {
+                crater.draw(in: NSBezierPath(ovalIn: bounds), relativeCenterPosition: .zero)
+            }
+            // Overlay a soft shadow on the opaque moon instead of erasing its alpha.
+            shadow.draw(fromCenter: shadowCenter, radius: 0,
+                        toCenter: shadowCenter, radius: 26, options: [])
+            NSGraphicsContext.restoreGraphicsState()
+
+            // A restrained edge remains readable on both pale and dark menu bars.
+            color(0x394250).withAlphaComponent(0.4).setStroke()
+            disk.lineWidth = 0.45
+            disk.stroke()
+            let rim = NSBezierPath(ovalIn: NSRect(x: 2.35, y: 2.35, width: 19.3, height: 19.3))
+            color(0xf1f3ff).withAlphaComponent(0.16 + 0.10 * glow).setStroke()
+            rim.lineWidth = 0.3
+            rim.stroke()
+            return true
+        }
     }
 
     private func surfacePath() -> NSBezierPath {
