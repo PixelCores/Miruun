@@ -1,5 +1,27 @@
 # Miruun 验证记录
 
+## 未发布：石质猫爪月球与月食渐变
+
+日期：2026 年 10 月 7 日。基于 `origin/main@44cc16ecc5ea08e18f8d8bcdc0064a1f5d410ddb`，分支 `feature/lunar-eclipse-status`；源码版本未变。
+
+从用户提供的参考图提取 1024×1024 透明月球，保留原石质纹理、灰色月海、猫爪凹坑和不规则实体月缘，去除深蓝背景和外部光晕。`MoonSurface.png` 作为 SwiftPM 资源随应用分发；纹理仅加载一次，AppKit 独立绘制暖白光晕，并在隔离透明层中叠加月食阴影。阴影遵循纹理 alpha，不染到月球外部，也不使月面变透明。
+
+菜单栏与页头共用绘图，页头保持静态；守护或定时备份任一开关开启时播放约 6 秒循环，两个开关均关闭或系统启用减少动态效果时静止。刷新、收起面板和切换服务不重置相位。动画控制逻辑未变。
+
+| 验证 | 结果 |
+| --- | --- |
+| 完整构建脚本 | 完整 Xcode 下运行 `bash "Build App.command" --no-reveal --disable-sandbox`：160 个 XCTest 全部通过（147 Engine + 13 Core），Release 与 plist 校验通过；日志 `/private/tmp/miruun-reference-moon-build.log` |
+| 最终 Release | 全量测试后仅微调全食亮度和完善应用资源定位，重新 Release 构建通过；日志 `/private/tmp/miruun-reference-moon-final-release.log`；最新可执行文件已更新到本次生成的 `dist/20261007-211309-37335/Miruun.app` |
+| 资源分发 | 源码与实际包内 PNG 的 SHA256 相同，可解码为 1024×1024；SwiftPM native/Xcode 两种资源包布局均验证。用当前 `moonImage` 和真实生成 accessor 构建四个隔离进程，CLI 的蓝色资源与 `.app` 的红色资源分别正确绘制，排除构建目录 fallback；文件 `/private/tmp/miruun-moon-bundle-sentinel` |
+| 实际主循环 | 使用当前 UI 源码与真正的资源包组装隔离验证应用，15 项检查通过，覆盖 `.app` 资源位置、开关组合、完整循环、保相位、停止恢复、重启和退出清理；日志 `/private/tmp/miruun-reference-moon-validation/results.log` |
+| 逐帧绘图 | 18/28/36/72/144px 共 605 帧中心 alpha 全为 255；各尺寸的 phase 0/120 与静态图逐像素相同，亮度在周期中段最低再恢复。18px 月体平均亮度约 197.50 → 56.87 → 197.50；指标 `/private/tmp/miruun-reference-moon-render/independent-review-metrics.json` |
+| 视觉预览 | 6 秒循环 `/private/tmp/miruun-reference-moon-preview.gif`，阶段图 `/private/tmp/miruun-reference-moon-contact.png`；实际 AppKit 绘图保留参考纹理、猫爪与月海朝向，浅/深/蓝色背景未见深蓝污染或实体月缘硬裁切，全食轮廓保留；菜单栏尺寸会自然减弱细石纹 |
+| 独立复核 | 纹理静态复用、图形状态恢复、sourceAtop 透明层隔离、资源载入和打包链路已复核；`git diff --check` 与脚本语法检查通过；主观风格仍由用户评价 |
+
+首次资源检查发现 native SwiftPM 生成的 `Bundle.module` 不搜索 `.app/Contents/Resources`，会被本机构建目录 fallback 掩盖。最终按运行布局明确选择资源：`.app` 从标准 Resources 下的模块 bundle 读取，CLI 使用 `.module`；资源缺失直接失败，不安装重复资源副本。临时验证断言也已统一解析 `/tmp` 与 `/private/tmp` 的符号链接后比较实际路径。
+
+验证没有启动真实守护或备份，没有读取真实 Codex 数据，也未替换当前运行的 Miruun。生命周期验证只使用隔离 bundle ID、临时状态图标及进程内偏好。未切换用户系统的减少动态效果设置，真实桌面高亮合成、其他显示器与长期功耗尚未运行验收；应用未做 Developer ID 签名或公证。
+
 ## 未发布：聊天与记忆的本地版本备份
 
 日期：2026 年 10 月 7 日。基于 `origin/main@217330da1adb08b01e874d03514a5e9373def2cb`，分支 `feature/codex-history-backups`；源码版本未变。

@@ -115,32 +115,70 @@ final class MenuPanelView: NSView {
                 blue: CGFloat(hex & 0xff) / 255, alpha: 1)
     }
 
-    static func moonImage(size: NSSize = NSSize(width: 18, height: 18)) -> NSImage {
-        let image = NSImage(size: size, flipped: true) { _ in
+    private static let moonSurface: NSImage = {
+        let resources: Bundle
+        if Bundle.main.bundleURL.pathExtension == "app" {
+            // Native SwiftPM and Xcode generate different Bundle.module searches.
+            // A packaged app always owns its resources in Contents/Resources.
+            guard let url = Bundle.main.resourceURL?.appendingPathComponent("Miruun_Miruun.bundle"),
+                  let bundle = Bundle(url: url) else {
+                preconditionFailure("Missing app resource bundle")
+            }
+            resources = bundle
+        } else {
+            resources = .module
+        }
+        guard let url = resources.url(forResource: "MoonSurface", withExtension: "png"),
+              let image = NSImage(contentsOf: url) else {
+            preconditionFailure("Missing bundled moon surface")
+        }
+        return image
+    }()
+
+    static func moonImage(size: NSSize = NSSize(width: 18, height: 18), eclipseProgress: Double? = nil) -> NSImage {
+        NSImage(size: size, flipped: true) { _ in
             NSGraphicsContext.saveGraphicsState()
             defer { NSGraphicsContext.restoreGraphicsState() }
+            guard let graphics = NSGraphicsContext.current else {
+                preconditionFailure("Missing moon drawing context")
+            }
+            graphics.imageInterpolation = .high
             let scale = NSAffineTransform()
             scale.scaleX(by: size.width / 24, yBy: size.height / 24)
             scale.concat()
 
-            NSColor.white.setFill()
-            NSBezierPath(ovalIn: NSRect(x: 1, y: 1, width: 22, height: 22)).fill()
-            // Alpha shading keeps the lunar craters visible in both template tints.
-            NSGraphicsContext.current?.compositingOperation = .destinationOut
-            NSColor.white.withAlphaComponent(0.28).setFill()
-            for crater in [
-                NSRect(x: 6, y: 5, width: 4, height: 4),
-                NSRect(x: 13, y: 6, width: 3, height: 3),
-                NSRect(x: 8, y: 12, width: 5, height: 4),
-                NSRect(x: 15, y: 14, width: 3, height: 4),
-                NSRect(x: 4.5, y: 11, width: 2, height: 2)
-            ] {
-                NSBezierPath(ovalIn: crater).fill()
+            let progress = min(max(eclipseProgress ?? 0, 0), 1)
+            let travel = (1 - cos(progress * .pi)) / 2
+            let shadowCenter = NSPoint(x: -27 + 78 * travel, y: 12)
+            let glow = 1 - 0.8 * pow(sin(progress * .pi), 4)
+            guard let halo = NSGradient(colorsAndLocations:
+                (color(0xffedcc).withAlphaComponent(0.38 * glow), 0),
+                (color(0xf8ce96).withAlphaComponent(0.14 * glow), 0.4),
+                (color(0xe8ba7e).withAlphaComponent(0), 1)),
+                let shadow = NSGradient(colorsAndLocations:
+                (color(0x181e2b).withAlphaComponent(0.86), 0),
+                (color(0x222938).withAlphaComponent(0.86), 0.52),
+                (color(0x525668).withAlphaComponent(0.44), 0.82),
+                (color(0x525668).withAlphaComponent(0), 1)) else {
+                preconditionFailure("Unable to create the lunar gradients")
             }
+            halo.draw(fromCenter: NSPoint(x: 12, y: 12), radius: 9.4,
+                      toCenter: NSPoint(x: 12, y: 12), radius: 12, options: [])
+
+            // Isolate the reference texture so the shadow follows its natural
+            // alpha edge, while the atmospheric glow remains a separate layer.
+            let context = graphics.cgContext
+            context.beginTransparencyLayer(auxiliaryInfo: nil)
+            moonSurface.draw(in: NSRect(x: 1.6, y: 1.6, width: 20.8, height: 20.8),
+                             from: .zero, operation: .sourceOver, fraction: 1,
+                             respectFlipped: true, hints: nil)
+            graphics.compositingOperation = .sourceAtop
+            shadow.draw(fromCenter: shadowCenter, radius: 0,
+                        toCenter: shadowCenter, radius: 26, options: [])
+            graphics.compositingOperation = .sourceOver
+            context.endTransparencyLayer()
             return true
         }
-        image.isTemplate = true
-        return image
     }
 
     private func surfacePath() -> NSBezierPath {

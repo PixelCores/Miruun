@@ -27,6 +27,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/Miruun" "$APP/Contents/MacOS/Miruun"
 cp "$BIN_DIR/MiruunEngine" "$APP/Contents/MacOS/MiruunEngine"
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
+# Keep the SwiftPM resource bundle in the standard app resource directory.
+cp -R "$BIN_DIR/Miruun_Miruun.bundle" "$APP/Contents/Resources/Miruun_Miruun.bundle"
 /usr/bin/plutil -lint "$APP/Contents/Info.plist"
 chmod 755 "$APP/Contents/MacOS/Miruun" "$APP/Contents/MacOS/MiruunEngine"
 # Deliberately no codesign, installer, launch-agent, pip or external dependency.
