@@ -115,43 +115,6 @@ final class MenuPanelView: NSView {
                 blue: CGFloat(hex & 0xff) / 255, alpha: 1)
     }
 
-    // Unequal, weathered basins suggest a paw without tracing a regular paw mark.
-    private static let moonBasins: [NSBezierPath] = {
-        let outlines: [[(CGFloat, CGFloat)]] = [
-            [(5.2, 10.5), (5.0, 9.3), (5.6, 8.2), (6.4, 8.4),
-             (7.3, 8.0), (7.9, 9.3), (7.7, 10.2), (6.7, 11.3), (5.8, 11.1)],
-            [(8.0, 6.8), (8.5, 5.0), (9.4, 4.7), (10.3, 5.0),
-             (10.5, 6.1), (11.1, 6.8), (10.6, 8.0), (9.6, 8.5), (8.6, 8.0)],
-            [(12.9, 5.8), (13.6, 4.5), (14.8, 4.6), (15.3, 5.5),
-             (14.9, 6.3), (14.8, 7.4), (13.8, 8.0), (12.8, 7.8), (12.5, 6.8)],
-            [(16.3, 9.0), (16.6, 8.1), (17.6, 7.6), (18.4, 8.2),
-             (18.8, 9.4), (18.1, 10.7), (16.9, 11.1), (16.5, 10.2), (15.8, 9.8)],
-            [(7.7, 14.5), (9.4, 13.0), (10.4, 11.8), (11.8, 12.0),
-             (12.3, 13.0), (13.1, 13.4), (14.6, 13.0), (15.7, 14.1),
-             (15.1, 15.7), (13.5, 16.2), (12.0, 15.8), (10.4, 16.9),
-             (8.9, 16.3), (7.5, 16.5), (7.1, 15.5)]
-        ]
-        return outlines.map { outline in
-            let points = outline.map { NSPoint(x: $0.0, y: $0.1) }
-            let path = NSBezierPath()
-            path.move(to: points[0])
-            // Smooth a closed outline while retaining its asymmetry and shallow notches.
-            for index in points.indices {
-                let previous = points[(index + points.count - 1) % points.count]
-                let start = points[index]
-                let end = points[(index + 1) % points.count]
-                let next = points[(index + 2) % points.count]
-                path.curve(to: end,
-                    controlPoint1: NSPoint(x: start.x + (end.x - previous.x) / 6,
-                                           y: start.y + (end.y - previous.y) / 6),
-                    controlPoint2: NSPoint(x: end.x - (next.x - start.x) / 6,
-                                           y: end.y - (next.y - start.y) / 6))
-            }
-            path.close()
-            return path
-        }
-    }()
-
     static func moonImage(size: NSSize = NSSize(width: 18, height: 18), eclipseProgress: Double? = nil) -> NSImage {
         NSImage(size: size, flipped: true) { _ in
             NSGraphicsContext.saveGraphicsState()
@@ -165,24 +128,21 @@ final class MenuPanelView: NSView {
             let shadowCenter = NSPoint(x: -27 + 78 * travel, y: 12)
             let glow = 1 - 0.8 * pow(sin(progress * .pi), 4)
             guard let halo = NSGradient(colorsAndLocations:
-                (color(0xffbd80).withAlphaComponent(0.30 * glow), 0),
-                (color(0xfaa774).withAlphaComponent(0.09 * glow), 0.45),
-                (color(0xfaa774).withAlphaComponent(0), 1)),
+                (color(0xe6edff).withAlphaComponent(0.22 * glow), 0),
+                (color(0xdce5f4).withAlphaComponent(0.09 * glow), 0.45),
+                (color(0xdce5f4).withAlphaComponent(0), 1)),
                 let surface = NSGradient(colorsAndLocations:
-                (color(0xfff7e7), 0), (color(0xe3dfd4), 0.52), (color(0x929ba5), 1)),
-                let basin = NSGradient(colorsAndLocations:
-                (color(0x555351).withAlphaComponent(0.21), 0),
-                (color(0x69717a).withAlphaComponent(0.16), 0.48),
-                (color(0x848984).withAlphaComponent(0.035), 1)),
-                let warmEdge = NSGradient(colorsAndLocations:
-                (color(0xffb16b).withAlphaComponent(0.60), 0),
-                (color(0xffd2a0).withAlphaComponent(0.32), 0.4),
-                (color(0xe1e9f4).withAlphaComponent(0.05), 1)),
+                (color(0xf8f8f3), 0), (color(0xdde0df), 0.58), (color(0x8f9baa), 1)),
+                let sea = NSGradient(colorsAndLocations:
+                (color(0x495869).withAlphaComponent(0.34), 0),
+                (color(0x626f7d).withAlphaComponent(0.22), 0.45),
+                (color(0x7c8791).withAlphaComponent(0.08), 0.75),
+                (color(0x7c8791).withAlphaComponent(0), 1)),
                 let shadow = NSGradient(colorsAndLocations:
-                (color(0x272731).withAlphaComponent(0.89), 0),
-                (color(0x332c31).withAlphaComponent(0.89), 0.52),
-                (color(0x92725e).withAlphaComponent(0.48), 0.82),
-                (color(0x92725e).withAlphaComponent(0), 1)) else {
+                (color(0x232b39).withAlphaComponent(0.89), 0),
+                (color(0x29313f).withAlphaComponent(0.89), 0.52),
+                (color(0x596675).withAlphaComponent(0.48), 0.82),
+                (color(0x596675).withAlphaComponent(0), 1)) else {
                 preconditionFailure("Unable to create the lunar gradients")
             }
             // Keep the glow inside the 18 pt canvas with a transparent outer edge.
@@ -194,56 +154,44 @@ final class MenuPanelView: NSView {
             surface.draw(fromCenter: NSPoint(x: 8, y: 6), radius: 0,
                          toCenter: NSPoint(x: 12, y: 12), radius: 15,
                          options: [.drawsBeforeStartingLocation, .drawsAfterEndingLocation])
-            for (index, path) in moonBasins.enumerated() {
+            // Overlapping maria have fading boundaries, so their loose paw-like
+            // arrangement reads as terrain rather than a separate stamped mark.
+            for (bounds, opacity): (NSRect, CGFloat) in [
+                (NSRect(x: 4.2, y: 5.8, width: 10.5, height: 12.3), 0.42),
+                (NSRect(x: 4.3, y: 8.6, width: 6.5, height: 6.8), 0.58),
+                (NSRect(x: 7.4, y: 4.4, width: 5.3, height: 7.5), 0.78),
+                (NSRect(x: 12.3, y: 4.2, width: 4.8, height: 6.8), 0.58),
+                (NSRect(x: 14.6, y: 8.1, width: 6.3, height: 6.4), 0.62),
+                (NSRect(x: 6.7, y: 10.6, width: 11.5, height: 9.0), 0.75),
+                (NSRect(x: 4.5, y: 12.4, width: 7.7, height: 5.7), 0.45),
+                (NSRect(x: 4.7, y: 11.8, width: 1.7, height: 1.4), 0.78),
+                (NSRect(x: 16.4, y: 13.0, width: 2.0, height: 1.7), 0.70),
+                (NSRect(x: 13.2, y: 17.8, width: 1.5, height: 1.3), 0.68),
+                (NSRect(x: 9.0, y: 17.6, width: 1.1, height: 1.2), 0.58),
+                (NSRect(x: 17.1, y: 6.4, width: 1.4, height: 1.3), 0.65),
+                (NSRect(x: 6.1, y: 5.5, width: 1.2, height: 1.0), 0.58)
+            ] {
                 NSGraphicsContext.saveGraphicsState()
-                defer { NSGraphicsContext.restoreGraphicsState() }
-                NSGraphicsContext.current?.cgContext.setAlpha([0.85, 1, 0.60, 0.75, 0.95][index])
-                NSGraphicsContext.saveGraphicsState()
-                let erosion = NSShadow()
-                erosion.shadowOffset = .zero
-                erosion.shadowBlurRadius = 0.55
-                erosion.shadowColor = color(0x5a5c64).withAlphaComponent(0.18)
-                erosion.set()
-                color(0x5a5c64).withAlphaComponent(0.06).setFill()
-                path.fill()
+                NSGraphicsContext.current?.cgContext.setAlpha(opacity)
+                let region = NSAffineTransform()
+                region.translateX(by: bounds.midX, yBy: bounds.midY)
+                region.scaleX(by: bounds.width / 2, yBy: bounds.height / 2)
+                region.concat()
+                // Draw to an exact unit circle before stretching it: clipping a
+                // rectangular gradient to an oval would leave an abrupt boundary.
+                sea.draw(fromCenter: .zero, radius: 0, toCenter: .zero, radius: 1, options: [])
                 NSGraphicsContext.restoreGraphicsState()
-                // A displaced light lip and shaded floor give each basin a little depth.
-                NSGraphicsContext.saveGraphicsState()
-                let lip = NSAffineTransform()
-                lip.translateX(by: 0.08, yBy: 0.20)
-                lip.concat()
-                color(0xfff6da).withAlphaComponent(0.16).setFill()
-                path.fill()
-                NSGraphicsContext.restoreGraphicsState()
-                basin.draw(in: path, angle: 78)
             }
-            // Fixed small depressions break up the surface, without flickering per frame.
-            for index in 0..<32 {
-                let angle = Double(index) * 2.3999632297
-                let radius = sqrt(Double(index + 1) / 33) * 9.1
-                let x = 12 + cos(angle) * radius
-                let y = 12 + sin(angle) * radius
-                let diameter = 0.22 + Double(index % 4) * 0.12
-                color(0x575960).withAlphaComponent(0.11).setFill()
-                NSBezierPath(ovalIn: NSRect(x: x, y: y, width: diameter, height: diameter * 0.8)).fill()
-                color(0xfff8e1).withAlphaComponent(0.20).setFill()
-                NSBezierPath(ovalIn: NSRect(x: x, y: y + diameter * 0.7,
-                                           width: diameter, height: diameter * 0.35)).fill()
-            }
-            let rim = NSBezierPath(ovalIn: NSRect(x: 2.1, y: 2.1, width: 19.8, height: 19.8))
-            rim.appendOval(in: NSRect(x: 2.45, y: 2.45, width: 19.1, height: 19.1))
-            rim.windingRule = .evenOdd
-            warmEdge.draw(in: rim, angle: 32)
-            // The penumbra carries a faint amber tint; the moon stays opaque at totality.
+            // The neutral shadow darkens the opaque surface without coloring its edge.
             shadow.draw(fromCenter: shadowCenter, radius: 0,
                         toCenter: shadowCenter, radius: 26, options: [])
             NSGraphicsContext.restoreGraphicsState()
 
-            color(0x42434b).withAlphaComponent(0.36).setStroke()
-            disk.lineWidth = 0.4
+            color(0x454e5b).withAlphaComponent(0.24).setStroke()
+            disk.lineWidth = 0.3
             disk.stroke()
             let edge = NSBezierPath(ovalIn: NSRect(x: 2.3, y: 2.3, width: 19.4, height: 19.4))
-            color(0xf8d9b5).withAlphaComponent(0.12 + 0.08 * glow).setStroke()
+            color(0xe8edf6).withAlphaComponent(0.07 + 0.06 * glow).setStroke()
             edge.lineWidth = 0.25
             edge.stroke()
             return true
