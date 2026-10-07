@@ -115,10 +115,34 @@ final class MenuPanelView: NSView {
                 blue: CGFloat(hex & 0xff) / 255, alpha: 1)
     }
 
+    private static let moonSurface: NSImage = {
+        let resources: Bundle
+        if Bundle.main.bundleURL.pathExtension == "app" {
+            // Native SwiftPM and Xcode generate different Bundle.module searches.
+            // A packaged app always owns its resources in Contents/Resources.
+            guard let url = Bundle.main.resourceURL?.appendingPathComponent("Miruun_Miruun.bundle"),
+                  let bundle = Bundle(url: url) else {
+                preconditionFailure("Missing app resource bundle")
+            }
+            resources = bundle
+        } else {
+            resources = .module
+        }
+        guard let url = resources.url(forResource: "MoonSurface", withExtension: "png"),
+              let image = NSImage(contentsOf: url) else {
+            preconditionFailure("Missing bundled moon surface")
+        }
+        return image
+    }()
+
     static func moonImage(size: NSSize = NSSize(width: 18, height: 18), eclipseProgress: Double? = nil) -> NSImage {
         NSImage(size: size, flipped: true) { _ in
             NSGraphicsContext.saveGraphicsState()
             defer { NSGraphicsContext.restoreGraphicsState() }
+            guard let graphics = NSGraphicsContext.current else {
+                preconditionFailure("Missing moon drawing context")
+            }
+            graphics.imageInterpolation = .high
             let scale = NSAffineTransform()
             scale.scaleX(by: size.width / 24, yBy: size.height / 24)
             scale.concat()
@@ -128,72 +152,31 @@ final class MenuPanelView: NSView {
             let shadowCenter = NSPoint(x: -27 + 78 * travel, y: 12)
             let glow = 1 - 0.8 * pow(sin(progress * .pi), 4)
             guard let halo = NSGradient(colorsAndLocations:
-                (color(0xe6edff).withAlphaComponent(0.22 * glow), 0),
-                (color(0xdce5f4).withAlphaComponent(0.09 * glow), 0.45),
-                (color(0xdce5f4).withAlphaComponent(0), 1)),
-                let surface = NSGradient(colorsAndLocations:
-                (color(0xf8f8f3), 0), (color(0xdde0df), 0.58), (color(0x8f9baa), 1)),
-                let sea = NSGradient(colorsAndLocations:
-                (color(0x495869).withAlphaComponent(0.34), 0),
-                (color(0x626f7d).withAlphaComponent(0.22), 0.45),
-                (color(0x7c8791).withAlphaComponent(0.08), 0.75),
-                (color(0x7c8791).withAlphaComponent(0), 1)),
+                (color(0xffedcc).withAlphaComponent(0.38 * glow), 0),
+                (color(0xf8ce96).withAlphaComponent(0.14 * glow), 0.4),
+                (color(0xe8ba7e).withAlphaComponent(0), 1)),
                 let shadow = NSGradient(colorsAndLocations:
-                (color(0x232b39).withAlphaComponent(0.89), 0),
-                (color(0x29313f).withAlphaComponent(0.89), 0.52),
-                (color(0x596675).withAlphaComponent(0.48), 0.82),
-                (color(0x596675).withAlphaComponent(0), 1)) else {
+                (color(0x181e2b).withAlphaComponent(0.86), 0),
+                (color(0x222938).withAlphaComponent(0.86), 0.52),
+                (color(0x525668).withAlphaComponent(0.44), 0.82),
+                (color(0x525668).withAlphaComponent(0), 1)) else {
                 preconditionFailure("Unable to create the lunar gradients")
             }
-            // Keep the glow inside the 18 pt canvas with a transparent outer edge.
             halo.draw(fromCenter: NSPoint(x: 12, y: 12), radius: 9.4,
                       toCenter: NSPoint(x: 12, y: 12), radius: 12, options: [])
-            let disk = NSBezierPath(ovalIn: NSRect(x: 2, y: 2, width: 20, height: 20))
-            NSGraphicsContext.saveGraphicsState()
-            disk.addClip()
-            surface.draw(fromCenter: NSPoint(x: 8, y: 6), radius: 0,
-                         toCenter: NSPoint(x: 12, y: 12), radius: 15,
-                         options: [.drawsBeforeStartingLocation, .drawsAfterEndingLocation])
-            // Overlapping maria have fading boundaries, so their loose paw-like
-            // arrangement reads as terrain rather than a separate stamped mark.
-            for (bounds, opacity): (NSRect, CGFloat) in [
-                (NSRect(x: 4.2, y: 5.8, width: 10.5, height: 12.3), 0.42),
-                (NSRect(x: 4.3, y: 8.6, width: 6.5, height: 6.8), 0.58),
-                (NSRect(x: 7.4, y: 4.4, width: 5.3, height: 7.5), 0.78),
-                (NSRect(x: 12.3, y: 4.2, width: 4.8, height: 6.8), 0.58),
-                (NSRect(x: 14.6, y: 8.1, width: 6.3, height: 6.4), 0.62),
-                (NSRect(x: 6.7, y: 10.6, width: 11.5, height: 9.0), 0.75),
-                (NSRect(x: 4.5, y: 12.4, width: 7.7, height: 5.7), 0.45),
-                (NSRect(x: 4.7, y: 11.8, width: 1.7, height: 1.4), 0.78),
-                (NSRect(x: 16.4, y: 13.0, width: 2.0, height: 1.7), 0.70),
-                (NSRect(x: 13.2, y: 17.8, width: 1.5, height: 1.3), 0.68),
-                (NSRect(x: 9.0, y: 17.6, width: 1.1, height: 1.2), 0.58),
-                (NSRect(x: 17.1, y: 6.4, width: 1.4, height: 1.3), 0.65),
-                (NSRect(x: 6.1, y: 5.5, width: 1.2, height: 1.0), 0.58)
-            ] {
-                NSGraphicsContext.saveGraphicsState()
-                NSGraphicsContext.current?.cgContext.setAlpha(opacity)
-                let region = NSAffineTransform()
-                region.translateX(by: bounds.midX, yBy: bounds.midY)
-                region.scaleX(by: bounds.width / 2, yBy: bounds.height / 2)
-                region.concat()
-                // Draw to an exact unit circle before stretching it: clipping a
-                // rectangular gradient to an oval would leave an abrupt boundary.
-                sea.draw(fromCenter: .zero, radius: 0, toCenter: .zero, radius: 1, options: [])
-                NSGraphicsContext.restoreGraphicsState()
-            }
-            // The neutral shadow darkens the opaque surface without coloring its edge.
+
+            // Isolate the reference texture so the shadow follows its natural
+            // alpha edge, while the atmospheric glow remains a separate layer.
+            let context = graphics.cgContext
+            context.beginTransparencyLayer(auxiliaryInfo: nil)
+            moonSurface.draw(in: NSRect(x: 1.6, y: 1.6, width: 20.8, height: 20.8),
+                             from: .zero, operation: .sourceOver, fraction: 1,
+                             respectFlipped: true, hints: nil)
+            graphics.compositingOperation = .sourceAtop
             shadow.draw(fromCenter: shadowCenter, radius: 0,
                         toCenter: shadowCenter, radius: 26, options: [])
-            NSGraphicsContext.restoreGraphicsState()
-
-            color(0x454e5b).withAlphaComponent(0.24).setStroke()
-            disk.lineWidth = 0.3
-            disk.stroke()
-            let edge = NSBezierPath(ovalIn: NSRect(x: 2.3, y: 2.3, width: 19.4, height: 19.4))
-            color(0xe8edf6).withAlphaComponent(0.07 + 0.06 * glow).setStroke()
-            edge.lineWidth = 0.25
-            edge.stroke()
+            graphics.compositingOperation = .sourceOver
+            context.endTransparencyLayer()
             return true
         }
     }
