@@ -24,6 +24,11 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
     private var guardService: ContinuityGuard? // worker queue only
     private var pendingLaunch: (id: UUID, application: URL, home: URL)? // worker queue only
     private var statusItem: NSStatusItem!
+    private var moonAnimationTimer: Timer? // main run loop only
+    private var moonAnimationStart: TimeInterval = 0
+    private lazy var eclipseFrames = (0..<120).map {
+        MenuPanelView.moonImage(eclipseProgress: Double($0) / 120)
+    }
     private var window: MenuPanel!
     private var panelView: MenuPanelView!
     private var openItems: [NSMenuItem] = []
@@ -110,6 +115,36 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.image = MenuPanelView.moonImage()
         statusItem.button?.target = self
         statusItem.button?.action = #selector(toggleWindow)
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(refreshMoonAnimation),
+            name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
+    }
+
+    @objc private func refreshMoonAnimation() {
+        let working = enabled || UserDefaults.standard.bool(forKey: "historyBackupEnabled")
+        let animate = working && !terminating && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        guard animate else {
+            if moonAnimationTimer != nil {
+                moonAnimationTimer?.invalidate()
+                moonAnimationTimer = nil
+                statusItem.button?.image = MenuPanelView.moonImage()
+            }
+            return
+        }
+        // Routine status refreshes and switching between enabled services must
+        // preserve the phase of the existing animation.
+        guard moonAnimationTimer == nil else { return }
+        moonAnimationStart = ProcessInfo.processInfo.systemUptime
+        statusItem.button?.image = eclipseFrames[0]
+        let timer = Timer(timeInterval: 1.0 / 20, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            let elapsed = ProcessInfo.processInfo.systemUptime - self.moonAnimationStart
+            let phase = elapsed.truncatingRemainder(dividingBy: 6) / 6
+            let index = min(Int(phase * Double(self.eclipseFrames.count)), self.eclipseFrames.count - 1)
+            self.statusItem.button?.image = self.eclipseFrames[index]
+        }
+        timer.tolerance = 0.01
+        moonAnimationTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     private func makeWindow() {
@@ -487,6 +522,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         historyInterval.isEnabled = !terminating && !isDiscovering
         historyVersions.isEnabled = canBackup && !historySnapshots.isEmpty
         historyExport.isEnabled = canBackup && historyVersions.indexOfSelectedItem >= 0 && !historySnapshots.isEmpty
+        refreshMoonAnimation()
 
     }
 
@@ -851,6 +887,9 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         terminating = true
+        refreshMoonAnimation()
+        NSWorkspace.shared.notificationCenter.removeObserver(self,
+            name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
         transitioning = true
         historyTimer?.invalidate(); historyTimer = nil
         launchRequest = nil

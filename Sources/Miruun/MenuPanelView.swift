@@ -115,7 +115,7 @@ final class MenuPanelView: NSView {
                 blue: CGFloat(hex & 0xff) / 255, alpha: 1)
     }
 
-    static func moonImage(size: NSSize = NSSize(width: 18, height: 18)) -> NSImage {
+    static func moonImage(size: NSSize = NSSize(width: 18, height: 18), eclipseProgress: Double? = nil) -> NSImage {
         let image = NSImage(size: size, flipped: true) { _ in
             NSGraphicsContext.saveGraphicsState()
             defer { NSGraphicsContext.restoreGraphicsState() }
@@ -136,6 +136,23 @@ final class MenuPanelView: NSView {
                 NSRect(x: 4.5, y: 11, width: 2, height: 2)
             ] {
                 NSBezierPath(ovalIn: crater).fill()
+            }
+            if let eclipseProgress {
+                // A soft shadow crosses the disk, then clears it entirely at both
+                // ends of the loop. Keep a faint silhouette even at totality.
+                let progress = min(max(eclipseProgress, 0), 1)
+                let travel = (1 - cos(progress * .pi)) / 2
+                let center = NSPoint(x: -27 + 78 * travel, y: 12)
+                guard let shadow = NSGradient(colorsAndLocations:
+                    (NSColor.white.withAlphaComponent(0.84), 0),
+                    (NSColor.white.withAlphaComponent(0.84), 0.52),
+                    (NSColor.white.withAlphaComponent(0.42), 0.82),
+                    (NSColor.white.withAlphaComponent(0), 1)) else {
+                    preconditionFailure("Unable to create the lunar shadow gradient")
+                }
+                // Template images use alpha, so the shadow follows the system's
+                // menu-bar tint in light, dark, and highlighted appearances.
+                shadow.draw(fromCenter: center, radius: 0, toCenter: center, radius: 26, options: [])
             }
             return true
         }
