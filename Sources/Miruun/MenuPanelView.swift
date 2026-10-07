@@ -115,37 +115,44 @@ final class MenuPanelView: NSView {
                 blue: CGFloat(hex & 0xff) / 255, alpha: 1)
     }
 
-    static func moonImage(size: NSSize = NSSize(width: 18, height: 18)) -> NSImage {
-        let image = NSImage(size: size, flipped: true) { _ in
-            NSGraphicsContext.saveGraphicsState()
-            defer { NSGraphicsContext.restoreGraphicsState() }
-            let scale = NSAffineTransform()
-            scale.scaleX(by: size.width / 24, yBy: size.height / 24)
-            scale.concat()
-
-            NSColor.white.setFill()
-            NSBezierPath(ovalIn: NSRect(x: 1, y: 1, width: 22, height: 22)).fill()
-            // Alpha shading keeps the lunar craters visible in both template tints.
-            NSGraphicsContext.current?.compositingOperation = .destinationOut
-            NSColor.white.withAlphaComponent(0.28).setFill()
-            for crater in moonCraters {
-                NSBezierPath(ovalIn: crater).fill()
+    // Unequal, weathered basins suggest a paw without tracing a regular paw mark.
+    private static let moonBasins: [NSBezierPath] = {
+        let outlines: [[(CGFloat, CGFloat)]] = [
+            [(5.2, 10.5), (5.0, 9.3), (5.6, 8.2), (6.4, 8.4),
+             (7.3, 8.0), (7.9, 9.3), (7.7, 10.2), (6.7, 11.3), (5.8, 11.1)],
+            [(8.0, 6.8), (8.5, 5.0), (9.4, 4.7), (10.3, 5.0),
+             (10.5, 6.1), (11.1, 6.8), (10.6, 8.0), (9.6, 8.5), (8.6, 8.0)],
+            [(12.9, 5.8), (13.6, 4.5), (14.8, 4.6), (15.3, 5.5),
+             (14.9, 6.3), (14.8, 7.4), (13.8, 8.0), (12.8, 7.8), (12.5, 6.8)],
+            [(16.3, 9.0), (16.6, 8.1), (17.6, 7.6), (18.4, 8.2),
+             (18.8, 9.4), (18.1, 10.7), (16.9, 11.1), (16.5, 10.2), (15.8, 9.8)],
+            [(7.7, 14.5), (9.4, 13.0), (10.4, 11.8), (11.8, 12.0),
+             (12.3, 13.0), (13.1, 13.4), (14.6, 13.0), (15.7, 14.1),
+             (15.1, 15.7), (13.5, 16.2), (12.0, 15.8), (10.4, 16.9),
+             (8.9, 16.3), (7.5, 16.5), (7.1, 15.5)]
+        ]
+        return outlines.map { outline in
+            let points = outline.map { NSPoint(x: $0.0, y: $0.1) }
+            let path = NSBezierPath()
+            path.move(to: points[0])
+            // Smooth a closed outline while retaining its asymmetry and shallow notches.
+            for index in points.indices {
+                let previous = points[(index + points.count - 1) % points.count]
+                let start = points[index]
+                let end = points[(index + 1) % points.count]
+                let next = points[(index + 2) % points.count]
+                path.curve(to: end,
+                    controlPoint1: NSPoint(x: start.x + (end.x - previous.x) / 6,
+                                           y: start.y + (end.y - previous.y) / 6),
+                    controlPoint2: NSPoint(x: end.x - (next.x - start.x) / 6,
+                                           y: end.y - (next.y - start.y) / 6))
             }
-            return true
+            path.close()
+            return path
         }
-        image.isTemplate = true
-        return image
-    }
+    }()
 
-    private static let moonCraters = [
-        NSRect(x: 6, y: 5, width: 4, height: 4),
-        NSRect(x: 13, y: 6, width: 3, height: 3),
-        NSRect(x: 8, y: 12, width: 5, height: 4),
-        NSRect(x: 15, y: 14, width: 3, height: 4),
-        NSRect(x: 4.5, y: 11, width: 2, height: 2)
-    ]
-
-    static func menuMoonImage(size: NSSize = NSSize(width: 18, height: 18), eclipseProgress: Double? = nil) -> NSImage {
+    static func moonImage(size: NSSize = NSSize(width: 18, height: 18), eclipseProgress: Double? = nil) -> NSImage {
         NSImage(size: size, flipped: true) { _ in
             NSGraphicsContext.saveGraphicsState()
             defer { NSGraphicsContext.restoreGraphicsState() }
@@ -158,47 +165,87 @@ final class MenuPanelView: NSView {
             let shadowCenter = NSPoint(x: -27 + 78 * travel, y: 12)
             let glow = 1 - 0.8 * pow(sin(progress * .pi), 4)
             guard let halo = NSGradient(colorsAndLocations:
-                (color(0xe3ecff).withAlphaComponent(0.24 * glow), 0),
-                (color(0xe3ecff).withAlphaComponent(0.08 * glow), 0.45),
-                (color(0xe3ecff).withAlphaComponent(0), 1)),
+                (color(0xffbd80).withAlphaComponent(0.30 * glow), 0),
+                (color(0xfaa774).withAlphaComponent(0.09 * glow), 0.45),
+                (color(0xfaa774).withAlphaComponent(0), 1)),
                 let surface = NSGradient(colorsAndLocations:
-                (color(0xfff7df), 0), (color(0xe2e0d5), 0.55), (color(0x9ba3a8), 1)),
-                let crater = NSGradient(colorsAndLocations:
-                (color(0x52616c).withAlphaComponent(0.18), 0),
-                (color(0x52616c).withAlphaComponent(0.11), 0.5),
-                (color(0x52616c).withAlphaComponent(0), 1)),
+                (color(0xfff7e7), 0), (color(0xe3dfd4), 0.52), (color(0x929ba5), 1)),
+                let basin = NSGradient(colorsAndLocations:
+                (color(0x555351).withAlphaComponent(0.21), 0),
+                (color(0x69717a).withAlphaComponent(0.16), 0.48),
+                (color(0x848984).withAlphaComponent(0.035), 1)),
+                let warmEdge = NSGradient(colorsAndLocations:
+                (color(0xffb16b).withAlphaComponent(0.60), 0),
+                (color(0xffd2a0).withAlphaComponent(0.32), 0.4),
+                (color(0xe1e9f4).withAlphaComponent(0.05), 1)),
                 let shadow = NSGradient(colorsAndLocations:
-                (color(0x161e2c).withAlphaComponent(0.88), 0),
-                (color(0x161e2c).withAlphaComponent(0.88), 0.52),
-                (color(0x161e2c).withAlphaComponent(0.44), 0.82),
-                (color(0x161e2c).withAlphaComponent(0), 1)) else {
+                (color(0x272731).withAlphaComponent(0.89), 0),
+                (color(0x332c31).withAlphaComponent(0.89), 0.52),
+                (color(0x92725e).withAlphaComponent(0.48), 0.82),
+                (color(0x92725e).withAlphaComponent(0), 1)) else {
                 preconditionFailure("Unable to create the lunar gradients")
             }
-            // Keep the entire halo inside the 18 pt image, including its fade to zero.
-            halo.draw(fromCenter: NSPoint(x: 12, y: 12), radius: 9.5,
+            // Keep the glow inside the 18 pt canvas with a transparent outer edge.
+            halo.draw(fromCenter: NSPoint(x: 12, y: 12), radius: 9.4,
                       toCenter: NSPoint(x: 12, y: 12), radius: 12, options: [])
             let disk = NSBezierPath(ovalIn: NSRect(x: 2, y: 2, width: 20, height: 20))
             NSGraphicsContext.saveGraphicsState()
             disk.addClip()
-            surface.draw(fromCenter: NSPoint(x: 8, y: 7), radius: 0,
+            surface.draw(fromCenter: NSPoint(x: 8, y: 6), radius: 0,
                          toCenter: NSPoint(x: 12, y: 12), radius: 15,
                          options: [.drawsBeforeStartingLocation, .drawsAfterEndingLocation])
-            for bounds in moonCraters {
-                crater.draw(in: NSBezierPath(ovalIn: bounds), relativeCenterPosition: .zero)
+            for (index, path) in moonBasins.enumerated() {
+                NSGraphicsContext.saveGraphicsState()
+                defer { NSGraphicsContext.restoreGraphicsState() }
+                NSGraphicsContext.current?.cgContext.setAlpha([0.85, 1, 0.60, 0.75, 0.95][index])
+                NSGraphicsContext.saveGraphicsState()
+                let erosion = NSShadow()
+                erosion.shadowOffset = .zero
+                erosion.shadowBlurRadius = 0.55
+                erosion.shadowColor = color(0x5a5c64).withAlphaComponent(0.18)
+                erosion.set()
+                color(0x5a5c64).withAlphaComponent(0.06).setFill()
+                path.fill()
+                NSGraphicsContext.restoreGraphicsState()
+                // A displaced light lip and shaded floor give each basin a little depth.
+                NSGraphicsContext.saveGraphicsState()
+                let lip = NSAffineTransform()
+                lip.translateX(by: 0.08, yBy: 0.20)
+                lip.concat()
+                color(0xfff6da).withAlphaComponent(0.16).setFill()
+                path.fill()
+                NSGraphicsContext.restoreGraphicsState()
+                basin.draw(in: path, angle: 78)
             }
-            // Overlay a soft shadow on the opaque moon instead of erasing its alpha.
+            // Fixed small depressions break up the surface, without flickering per frame.
+            for index in 0..<32 {
+                let angle = Double(index) * 2.3999632297
+                let radius = sqrt(Double(index + 1) / 33) * 9.1
+                let x = 12 + cos(angle) * radius
+                let y = 12 + sin(angle) * radius
+                let diameter = 0.22 + Double(index % 4) * 0.12
+                color(0x575960).withAlphaComponent(0.11).setFill()
+                NSBezierPath(ovalIn: NSRect(x: x, y: y, width: diameter, height: diameter * 0.8)).fill()
+                color(0xfff8e1).withAlphaComponent(0.20).setFill()
+                NSBezierPath(ovalIn: NSRect(x: x, y: y + diameter * 0.7,
+                                           width: diameter, height: diameter * 0.35)).fill()
+            }
+            let rim = NSBezierPath(ovalIn: NSRect(x: 2.1, y: 2.1, width: 19.8, height: 19.8))
+            rim.appendOval(in: NSRect(x: 2.45, y: 2.45, width: 19.1, height: 19.1))
+            rim.windingRule = .evenOdd
+            warmEdge.draw(in: rim, angle: 32)
+            // The penumbra carries a faint amber tint; the moon stays opaque at totality.
             shadow.draw(fromCenter: shadowCenter, radius: 0,
                         toCenter: shadowCenter, radius: 26, options: [])
             NSGraphicsContext.restoreGraphicsState()
 
-            // A restrained edge remains readable on both pale and dark menu bars.
-            color(0x394250).withAlphaComponent(0.4).setStroke()
-            disk.lineWidth = 0.45
+            color(0x42434b).withAlphaComponent(0.36).setStroke()
+            disk.lineWidth = 0.4
             disk.stroke()
-            let rim = NSBezierPath(ovalIn: NSRect(x: 2.35, y: 2.35, width: 19.3, height: 19.3))
-            color(0xf1f3ff).withAlphaComponent(0.16 + 0.10 * glow).setStroke()
-            rim.lineWidth = 0.3
-            rim.stroke()
+            let edge = NSBezierPath(ovalIn: NSRect(x: 2.3, y: 2.3, width: 19.4, height: 19.4))
+            color(0xf8d9b5).withAlphaComponent(0.12 + 0.08 * glow).setStroke()
+            edge.lineWidth = 0.25
+            edge.stroke()
             return true
         }
     }
