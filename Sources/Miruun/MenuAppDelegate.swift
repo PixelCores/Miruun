@@ -6,6 +6,20 @@ import BridgeEngine
 /// worker; stopping waits for any in-progress atomic update before returning.
 final class MenuAppDelegate: NSObject, NSApplicationDelegate {
     private let worker = DispatchQueue(label: "io.github.pixelcores.miruun.continuity", qos: .utility)
+    private let historyWorker = DispatchQueue(label: "io.github.pixelcores.miruun.history", qos: .utility)
+    private var historyTimer: Timer? // main queue only; file work uses historyWorker
+    private var historyBusy = false
+    private var historyError: String?
+    private var historySnapshots: [CodexHistoryBackup.Snapshot] = []
+    private let historyButton = NSButton(title: "查看备份与版本", target: nil, action: nil)
+    private let historyToggle = NSSwitch(frame: .zero)
+    private let historyPageToggle = NSSwitch(frame: .zero)
+    private let historyInterval = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let historyVersions = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let historyNow = NSButton(title: "立即备份", target: nil, action: nil)
+    private let historyExport = NSButton(title: "导出所选版本…", target: nil, action: nil)
+    private let historyStatus = NSTextField(wrappingLabelWithString: "尚未备份")
+    private var historyViews: [NSView] = []
     private var timer: DispatchSourceTimer? // worker queue only
     private var guardService: ContinuityGuard? // worker queue only
     private var pendingLaunch: (id: UUID, application: URL, home: URL)? // worker queue only
@@ -35,6 +49,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
     private var isChoosingHome = false
     private var mouseMonitor: Any?
     private var transitioning = false
+    private var terminating = false
     private var enabled = false
     private var launchRequest: UUID? // main queue only; also invalidates queued callbacks
     private var launchError: String?
@@ -83,6 +98,8 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         let openItem = applicationMenu.addItem(withTitle: "打开 Codex", action: #selector(openCodex), keyEquivalent: "")
         openItem.target = self
         openItems.append(openItem)
+        let historyItem = applicationMenu.addItem(withTitle: "聊天与记忆备份…", action: #selector(showHistoryBackups), keyEquivalent: "")
+        historyItem.target = self
         applicationMenu.addItem(.separator())
         let quitItem = applicationMenu.addItem(withTitle: "退出 Miruun", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
@@ -143,6 +160,28 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         panelView.addSubview(enableButton)
         overviewViews.append(enableButton)
 
+        let backupTitle = makeLabel("聊天与记忆备份", frame: NSRect(x: 30, y: 221, width: 190, height: 19), size: 12, weight: .semibold)
+        backupTitle.textColor = MenuPanelView.color(0xF4F7FA)
+        let backupCaption = makeLabel("定时保存本地历史版本", frame: NSRect(x: 30, y: 247, width: 190, height: 14), size: 10, weight: .regular)
+        for label in [backupTitle, backupCaption] { panelView.addSubview(label); overviewViews.append(label) }
+        historyToggle.frame = NSRect(x: 252, y: 226, width: 42, height: 26)
+        historyToggle.target = self
+        historyToggle.action = #selector(toggleHistoryBackups(_:))
+        historyToggle.setAccessibilityLabel("定时备份聊天与记忆")
+        panelView.addSubview(historyToggle)
+        overviewViews.append(historyToggle)
+
+        historyButton.frame = NSRect(x: 26, y: 290, width: 280, height: 20)
+        historyButton.isBordered = false
+        historyButton.font = .systemFont(ofSize: 11, weight: .medium)
+        historyButton.alignment = .left
+        historyButton.contentTintColor = MenuPanelView.color(0xC9D2DD)
+        historyButton.target = self
+        historyButton.action = #selector(showHistoryBackups)
+        historyButton.image = NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: nil)
+        panelView.addSubview(historyButton)
+        overviewViews.append(historyButton)
+
         homeTitle.frame = NSRect(x: 30, y: 91, width: 190, height: 14)
         homeTitle.font = .systemFont(ofSize: 9, weight: .semibold)
         homeTitle.textColor = MenuPanelView.color(0xC9D2DD)
@@ -185,6 +224,8 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         statusScroll.documentView = statusLabel
         panelView.addSubview(statusScroll)
         statusViews = [statusScroll]
+
+        makeHistoryControls()
 
         settingsButton.frame = NSRect(x: 16, y: 304, width: 144, height: 30)
         settingsButton.target = self
@@ -249,7 +290,8 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         for view in overviewViews { view.isHidden = page != 0 }
         for view in settingsViews { view.isHidden = page != 1 }
         for view in statusViews { view.isHidden = page != 2 }
-        sectionLabel.stringValue = page == 0 ? "Miruun" : page == 1 ? "设置" : "连接状态"
+        for view in historyViews { view.isHidden = page != 3 }
+        sectionLabel.stringValue = page == 0 ? "Miruun" : page == 1 ? "设置" : page == 2 ? "连接状态" : "聊天与记忆备份"
         configureFooter(settingsButton, label: page == 0 ? "设置" : "返回")
     }
 
@@ -309,7 +351,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func chooseHome() {
-        guard !enabled, !transitioning, !isDiscovering else { return }
+        guard !enabled, !transitioning, !isDiscovering, !historyBusy else { return }
         isChoosingHome = true
         defer { isChoosingHome = false; showWindow() }
         let panel = NSOpenPanel()
@@ -324,15 +366,19 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func rediscoverDirectories() {
-        guard !enabled, !transitioning, !isDiscovering else { return }
+        guard !enabled, !transitioning, !isDiscovering, !historyBusy else { return }
         UserDefaults.standard.set(false, forKey: "continuityHomeIsCustom")
         discoverDirectories()
     }
 
     private func discoverDirectories(resumeGuard: Bool = false) {
-        guard !enabled, !transitioning, !isDiscovering else { return }
+        guard !enabled, !transitioning, !isDiscovering, !historyBusy else { return }
         isDiscovering = true
+        historyTimer?.invalidate(); historyTimer = nil
         selectedHome = nil
+        historySnapshots = []
+        historyError = nil
+        historyVersions.removeAllItems()
         homeField.stringValue = "正在查找…"
         claudeHomeField.stringValue = "正在查找…"
         refreshControls()
@@ -353,6 +399,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
                     self.claudeHomeField.stringValue = directories.claude.directory?.path ?? directories.claude.error ?? "未找到目录"
                     self.claudeHomeField.toolTip = self.claudeHomeField.stringValue + "\n来源：" + directories.claude.source
                     self.refreshControls()
+                    self.loadHistoryBackups()
                     if resumeGuard && self.selectedHome != nil { self.start() }
                     else if let error = directories.codex.error { self.showStatus(error, symbol: "exclamationmark.circle") }
                     else { self.showStatus("守护已暂停 · 配置目录已找到", symbol: "pause.circle") }
@@ -426,10 +473,20 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
     private func refreshControls() {
         enableButton.state = enabled ? .on : .off
         enableButton.isEnabled = !transitioning && !isDiscovering && (enabled || selectedHome != nil)
-        chooseButton.isEnabled = !enabled && !transitioning && !isDiscovering
+        chooseButton.isEnabled = !enabled && !transitioning && !isDiscovering && !historyBusy
         discoverButton.isEnabled = chooseButton.isEnabled
         let canOpen = enabled && !transitioning && launchRequest == nil
         for item in openItems { item.isEnabled = canOpen }
+        let canBackup = !transitioning && !isDiscovering && !historyBusy && selectedHome != nil
+        historyNow.isEnabled = canBackup
+        let automatic = UserDefaults.standard.bool(forKey: "historyBackupEnabled")
+        historyToggle.state = automatic ? .on : .off
+        historyPageToggle.state = historyToggle.state
+        historyToggle.isEnabled = !terminating && !isDiscovering && selectedHome != nil
+        historyPageToggle.isEnabled = historyToggle.isEnabled
+        historyInterval.isEnabled = !terminating && !isDiscovering
+        historyVersions.isEnabled = canBackup && !historySnapshots.isEmpty
+        historyExport.isEnabled = canBackup && historyVersions.indexOfSelectedItem >= 0 && !historySnapshots.isEmpty
 
     }
 
@@ -558,7 +615,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
     private func refreshLoginState() {
         let state = SMAppService.mainApp.status
         loginButton.state = state == .enabled || state == .requiresApproval ? .on : .off
-        loginLabel.stringValue = state == .requiresApproval ? "请在系统设置 → 通用 → 登录项中允许 Miruun。" : "登录 Mac 时启动后台守护。"
+        loginLabel.stringValue = state == .requiresApproval ? "请在系统设置 → 通用 → 登录项中允许 Miruun。" : "登录 Mac 时启动 Miruun 与已启用的备份。"
         loginLabel.toolTip = loginLabel.stringValue
     }
 
@@ -582,16 +639,228 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func makeHistoryControls() {
+        let caption = makeLabel("所选 Codex 目录中的本地记录", frame: NSRect(x: 30, y: 88, width: 272, height: 18), size: 11, weight: .medium)
+        let intervalLabel = makeLabel("定时备份", frame: NSRect(x: 30, y: 120, width: 95, height: 20), size: 12, weight: .medium)
+        historyPageToggle.frame = NSRect(x: 252, y: 113, width: 42, height: 26)
+        historyPageToggle.target = self
+        historyPageToggle.action = #selector(toggleHistoryBackups(_:))
+        historyPageToggle.setAccessibilityLabel("定时备份聊天与记忆")
+        historyInterval.frame = NSRect(x: 26, y: 145, width: 280, height: 28)
+        for (title, seconds) in [("每小时备份", 3600), ("每天备份", 86400)] {
+            historyInterval.addItem(withTitle: title)
+            historyInterval.lastItem?.tag = seconds
+        }
+        historyInterval.selectItem(withTag: UserDefaults.standard.integer(forKey: "historyBackupInterval"))
+        if historyInterval.indexOfSelectedItem < 0 { historyInterval.selectItem(withTag: 3600) }
+        historyInterval.target = self
+        historyInterval.action = #selector(changeHistoryInterval)
+        historyInterval.setAccessibilityLabel("聊天与记忆定时备份间隔")
+        historyNow.target = self
+        historyNow.action = #selector(backupHistoryNow)
+        styleButton(historyNow, frame: NSRect(x: 30, y: 184, width: 126, height: 28))
+        let reveal = NSButton(title: "打开备份目录", target: self, action: #selector(revealHistoryBackups))
+        styleButton(reveal, frame: NSRect(x: 168, y: 184, width: 134, height: 28))
+        historyVersions.frame = NSRect(x: 26, y: 224, width: 280, height: 28)
+        historyVersions.setAccessibilityLabel("历史备份版本，最新在前")
+        historyVersions.target = self
+        historyVersions.action = #selector(selectHistoryVersion)
+        historyExport.target = self
+        historyExport.action = #selector(exportHistoryVersion)
+        styleButton(historyExport, frame: NSRect(x: 30, y: 263, width: 272, height: 28))
+        let scroll = NSScrollView(frame: NSRect(x: 30, y: 304, width: 272, height: 58))
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        historyStatus.frame = NSRect(x: 0, y: 0, width: 258, height: 58)
+        historyStatus.preferredMaxLayoutWidth = 258
+        historyStatus.font = .systemFont(ofSize: 11)
+        historyStatus.textColor = MenuPanelView.color(0xF4F7FA)
+        historyStatus.isSelectable = true
+        scroll.documentView = historyStatus
+        let scope = NSTextField(wrappingLabelWithString: "备份保留在本机，包含聊天原文和附件。\n不含云端记录、目录外数据库与登录凭据。")
+        scope.frame = NSRect(x: 30, y: 371, width: 272, height: 34)
+        scope.font = .systemFont(ofSize: 10)
+        scope.textColor = MenuPanelView.color(0xC9D2DD)
+        historyViews = [caption, intervalLabel, historyPageToggle, historyInterval, historyNow, reveal, historyVersions, historyExport, scroll, scope]
+        for view in historyViews { panelView.addSubview(view) }
+    }
+
+    @objc private func showHistoryBackups() {
+        setPage(3)
+        showWindow()
+        if !historyBusy { loadHistoryBackups() }
+    }
+
+    private func setHistoryStatus(_ message: String, failed: Bool = false) {
+        if failed { historyError = message }
+        let visible = !failed && historyError != nil ? message + "\n最近操作失败：" + historyError! : message
+        historyStatus.stringValue = visible
+        historyStatus.toolTip = visible
+        let height = historyStatus.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: 258, height: 10_000)).height ?? 58
+        historyStatus.setFrameSize(NSSize(width: 258, height: max(58, height)))
+        historyStatus.textColor = historyError != nil ? .systemOrange : MenuPanelView.color(0xF4F7FA)
+        historyButton.title = historyError != nil ? "备份需要处理 · 查看详情" : "查看备份与版本"
+        historyButton.toolTip = historyError ?? message
+    }
+
+    private func updateHistoryVersions(_ snapshots: [CodexHistoryBackup.Snapshot]) {
+        historySnapshots = snapshots
+        historyVersions.removeAllItems()
+        for snapshot in snapshots {
+            historyVersions.addItem(withTitle: snapshot.createdAt.formatted(date: .numeric, time: .standard) + " · " + String(snapshot.id.prefix(8)))
+        }
+        if snapshots.isEmpty { historyVersions.addItem(withTitle: "尚无历史版本") }
+        refreshControls()
+    }
+
+    @objc private func selectHistoryVersion() {
+        let index = historyVersions.indexOfSelectedItem
+        guard historySnapshots.indices.contains(index) else { return }
+        let snapshot = historySnapshots[index]
+        let bytes = snapshot.files.reduce(Int64(0)) { $0 + $1.byteCount }
+        setHistoryStatus("版本包含 \(snapshot.files.count) 个文件 · \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))\n导出到新目录后可查看完整文件；不会覆盖当前 Codex。")
+    }
+
+    private func loadHistoryBackups() {
+        guard !historyBusy, !transitioning, !isDiscovering, let home = selectedHome else { return }
+        historyBusy = true
+        refreshControls()
+        historyWorker.async {
+            let result = Result { try CodexHistoryBackup.snapshots(home: home, repository: CodexHistoryBackup.defaultRepository) }
+            DispatchQueue.main.async {
+                self.historyBusy = false
+                guard !self.terminating else { return }
+                switch result {
+                case .success(let snapshots):
+                    self.updateHistoryVersions(snapshots)
+                    if let error = self.historyError {
+                        self.setHistoryStatus(error, failed: true)
+                    } else if let latest = snapshots.first {
+                        self.setHistoryStatus("最新版本：" + latest.createdAt.formatted(date: .numeric, time: .standard) + "\n共 \(snapshots.count) 个版本 · \(latest.files.count) 个文件")
+                    } else { self.setHistoryStatus("尚无备份。选择立即备份或启用定时备份。") }
+                    self.configureHistoryTimer()
+                case .failure(let error):
+                    self.updateHistoryVersions([])
+                    self.setHistoryStatus(error.localizedDescription, failed: true)
+                }
+                self.refreshControls()
+            }
+        }
+    }
+
+    @objc private func toggleHistoryBackups(_ sender: NSSwitch) {
+        UserDefaults.standard.set(sender.state == .on, forKey: "historyBackupEnabled")
+        refreshControls()
+        configureHistoryTimer()
+        if sender.state == .off {
+            setHistoryStatus(historyBusy
+                ? "定时备份已关闭；当前操作完成后停止，历史版本保留。"
+                : "定时备份已关闭；历史版本保留，可随时手动备份。")
+        }
+    }
+
+    @objc private func changeHistoryInterval() {
+        UserDefaults.standard.set(historyInterval.selectedItem?.tag ?? 3600, forKey: "historyBackupInterval")
+        configureHistoryTimer()
+    }
+
+    private func configureHistoryTimer() {
+        historyTimer?.invalidate(); historyTimer = nil
+        guard UserDefaults.standard.bool(forKey: "historyBackupEnabled"), selectedHome != nil, !terminating else { return }
+        historyTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            self?.backupHistoryIfDue()
+        }
+        backupHistoryIfDue()
+    }
+
+    private func backupHistoryIfDue() {
+        guard UserDefaults.standard.bool(forKey: "historyBackupEnabled"),
+              let home = selectedHome, let interval = historyInterval.selectedItem?.tag, interval > 0 else { return }
+        let last = UserDefaults.standard.object(forKey: "historyBackupLastAttempt." + home.path) as? Date
+        if let last, last <= Date(), Date().timeIntervalSince(last) < Double(interval) { return }
+        backupHistoryNow()
+    }
+
+    @objc private func backupHistoryNow() {
+        guard !historyBusy, !transitioning, !isDiscovering, let home = selectedHome else { return }
+        historyBusy = true
+        historyError = nil
+        UserDefaults.standard.set(Date(), forKey: "historyBackupLastAttempt." + home.path)
+        setHistoryStatus("正在备份聊天、记忆与附件…")
+        refreshControls()
+        historyWorker.async {
+            let result = Result { () -> (CodexHistoryBackup.Snapshot, [CodexHistoryBackup.Snapshot]) in
+                let snapshot = try CodexHistoryBackup.create(home: home, repository: CodexHistoryBackup.defaultRepository)
+                return (snapshot, try CodexHistoryBackup.snapshots(home: home, repository: CodexHistoryBackup.defaultRepository))
+            }
+            DispatchQueue.main.async {
+                self.historyBusy = false
+                guard !self.terminating else { return }
+                switch result {
+                case .success(let (snapshot, snapshots)):
+                    self.updateHistoryVersions(snapshots)
+                    self.setHistoryStatus("备份检查完成 · \(snapshot.files.count) 个文件\n最新版本：" + snapshot.createdAt.formatted(date: .numeric, time: .standard) + "；内容不变时复用原版本。")
+                case .failure(let error): self.setHistoryStatus(error.localizedDescription, failed: true)
+                }
+                self.refreshControls()
+            }
+        }
+    }
+
+    @objc private func revealHistoryBackups() {
+        let directory = CodexHistoryBackup.defaultRepository
+        if FileManager.default.fileExists(atPath: directory.path) { NSWorkspace.shared.open(directory) }
+        else { setHistoryStatus("尚未创建备份目录，请先完成一次备份。") }
+    }
+
+    @objc private func exportHistoryVersion() {
+        let index = historyVersions.indexOfSelectedItem
+        guard !historyBusy, !transitioning, historySnapshots.indices.contains(index) else { return }
+        let snapshot = historySnapshots[index]
+        isChoosingHome = true
+        defer { isChoosingHome = false; showWindow() }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true; panel.canChooseFiles = false
+        panel.canCreateDirectories = true; panel.allowsMultipleSelection = false
+        panel.title = "选择导出位置"
+        panel.message = "将在这里新建独立文件夹，保留原目录结构，包含聊天与记忆原文。"
+        guard panel.runModal() == .OK, let parent = panel.url else { return }
+        let destination = parent.appendingPathComponent("Miruun-" + snapshot.id, isDirectory: true)
+        historyBusy = true
+        setHistoryStatus("正在校验并导出所选版本…")
+        refreshControls()
+        historyWorker.async {
+            let result = Result { try CodexHistoryBackup.export(snapshot, repository: CodexHistoryBackup.defaultRepository, destination: destination) }
+            DispatchQueue.main.async {
+                self.historyBusy = false
+                guard !self.terminating else { return }
+                switch result {
+                case .success:
+                    self.historyError = nil
+                    self.setHistoryStatus("版本已导出到：\n" + destination.path)
+                    NSWorkspace.shared.activateFileViewerSelecting([destination])
+                case .failure(let error): self.setHistoryStatus(error.localizedDescription, failed: true)
+                }
+                self.refreshControls()
+            }
+        }
+    }
+
     @objc private func quit() { NSApp.terminate(nil) }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        terminating = true
         transitioning = true
+        historyTimer?.invalidate(); historyTimer = nil
         launchRequest = nil
         hideWindow()
         worker.async {
             self.timer?.cancel(); self.timer = nil
             self.guardService = nil; self.pendingLaunch = nil
-            DispatchQueue.main.async { sender.reply(toApplicationShouldTerminate: true) }
+            self.historyWorker.async {
+                DispatchQueue.main.async { sender.reply(toApplicationShouldTerminate: true) }
+            }
         }
         return .terminateLater
     }
