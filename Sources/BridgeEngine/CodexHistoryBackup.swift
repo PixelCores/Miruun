@@ -3,7 +3,7 @@ import CryptoKit
 import Darwin
 
 /// Versioned local copies of history and memory under one explicitly selected CODEX_HOME.
-/// Authentication/configuration are excluded; export never restores into the live home.
+/// Authentication/configuration are excluded; export and migration only publish new directories.
 public enum CodexHistoryBackup {
     public struct Entry: Codable, Equatable, Sendable {
         public let relativePath: String
@@ -123,6 +123,16 @@ public enum CodexHistoryBackup {
 
     /// Materializes a verified version in a new directory. Publication is atomic.
     public static func export(_ snapshot: Snapshot, repository: URL = defaultRepository, destination: URL) throws {
+        try materialize(snapshot, repository: repository, destination: destination, migrating: false)
+    }
+
+    /// Prepares supported local history for a different CODEX_HOME without logging in,
+    /// starting Codex, or invoking a model. The original version remains unchanged.
+    public static func migrate(_ snapshot: Snapshot, repository: URL = defaultRepository, destination: URL) throws {
+        try materialize(snapshot, repository: repository, destination: destination, migrating: true)
+    }
+
+    private static func materialize(_ snapshot: Snapshot, repository: URL, destination: URL, migrating: Bool) throws {
         try validate(snapshot)
         let home = URL(fileURLWithPath: snapshot.sourceHome, isDirectory: true)
         let (_, repository) = try locations(home: home, repository: repository)
@@ -148,9 +158,43 @@ public enum CodexHistoryBackup {
                 let result = try stream(object, to: target)
                 guard result.sha256 == entry.sha256, result.byteCount == entry.byteCount else { throw Failure.corruptObject }
             }
+            var published = snapshot
+            if migrating {
+                let excluded = try CodexHistoryMigration.prepare(staging: staging, snapshot: snapshot, destination: destination)
+                var entries: [Entry] = []
+                var changedFiles: [String] = []
+                let omitted = Set(excluded)
+                for entry in snapshot.files where !omitted.contains(entry.relativePath) {
+                    let file = staging.appendingPathComponent(entry.relativePath)
+                    let content = try stream(file)
+                    let migrated = Entry(relativePath: entry.relativePath, sha256: content.sha256, byteCount: content.byteCount)
+                    entries.append(migrated)
+                    if migrated != entry { changedFiles.append(entry.relativePath) }
+                    // SQLite edits happened after the copy's fsync. Persist the edited
+                    // files before publishing the new directory and its final hashes.
+                    let fd = open(file.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+                    guard fd >= 0 else { throw NativeStorageError.writeFailed }
+                    let synced = fsync(fd) == 0
+                    close(fd)
+                    guard synced else { throw NativeStorageError.writeFailed }
+                }
+                guard !entries.isEmpty else { throw Failure.noData }
+                published = Snapshot(formatVersion: 1, id: UUID().uuidString.lowercased(), createdAt: Date(),
+                                     sourceHome: destination.path, files: entries)
+                let receipt: [String: Any] = [
+                    "formatVersion": 1, "sourceSnapshotID": snapshot.id, "sourceHome": snapshot.sourceHome,
+                    "destinationHome": destination.path, "migratedSnapshotID": published.id,
+                    "excludedFiles": excluded.sorted(),
+                    "changedFiles": changedFiles,
+                    "scope": "local-legacy-history", "modelRequests": 0,
+                    "nextStep": "在 Codex 配置此 CODEX_HOME 并另行登录目标账号；未验证真实账号续聊，云端聊天与个人 Memory 不在迁移范围内。"
+                ]
+                try NativeFileSafety.writeExclusive(JSONSerialization.data(withJSONObject: receipt, options: [.prettyPrinted, .sortedKeys]),
+                                                    to: staging.appendingPathComponent("miruun-migration.json"))
+            }
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try NativeFileSafety.writeExclusive(try encoder.encode(snapshot), to: staging.appendingPathComponent("miruun-backup.json"))
+            try NativeFileSafety.writeExclusive(try encoder.encode(published), to: staging.appendingPathComponent("miruun-backup.json"))
             // Persist every newly created directory before exposing the completed tree.
             try syncTree(staging)
             guard renamex_np(staging.path, destination.path, UInt32(RENAME_EXCL)) == 0 else {

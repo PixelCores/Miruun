@@ -93,6 +93,14 @@ flowchart LR
 
 主 GUI 已不调用早期 helper/原生恢复流程。原 `MiruunEngine`、备份、事务与测试保留为研究代码；旧单线程 UI、`BridgeRunner`、`ConfirmationSheet` 与 UI 私有未决状态已移除。旧 helper 独立入口仍没有原 UI 的持久未决保护，不能把它当作当前产品的操作入口。
 
+## 本地历史与记忆迁移
+
+迁移复用版本备份的对象校验、私有临时目录和原子发布流程。在临时副本中验证 legacy JSONL 的首条 `session_meta`，将 `state_5.sqlite` 中每个线程的 `rollout_path` 与实际文件及线程 ID 对齐，再调整为目标目录路径。原始对话、工具和 compaction 记录不重写；工作区、项目根目录及正文路径保留原值。当前只识别通过表与必要字段检查的 `state_5.sqlite`、`memories_1.sqlite`，保留并校验当前 Codex 的五个时间戳触发器；发现未知表、视图、触发器、未完成的数据库迁移、其他数据库版本或分页/父历史链时停止。原样导出继续保留这些格式。
+
+迁移不运行 app-server，也不借用 `thread/resume` 的不稳定 history/path 参数。目标不复制队列和目标数据库，删除远程控制登记及格式迁移进度。保留已完成的索引回填状态，非 complete 状态明确拒绝，避免携带旧回填租约或强制扫描覆盖数据库中的记忆策略；按线程数据库的毫秒更新时间（缺失时回退秒值）恢复已索引会话的 mtime，避免原生扫描把旧历史误判为新修改。记忆任务只接受 `done` 状态，清除 worker、ownership token 和 lease，同时保留已有产物与成功水位。不能把未完成任务标成成功，也不能靠重置重试数保证后台不会再次推理，因此遇到未完成任务明确拒绝。副本按最终文件重新计算清单并保存来源与排除项回执，成功后一次性发布到不存在的新目录。
+
+此路径只处理本机数据，不传递认证、配置或账户权限。用户需自行配置新 `CODEX_HOME`、目标账号与所需 provider。操作本身不产生模型请求，不承诺未来续聊或新记忆生成免费；本地 Memory 文件也不等于 ChatGPT 账号的云端 Memory。当前桌面提供的 Claude/Cursor 导入来源不是已验证的 OpenAI A → B 云端导入接口，故本次不接入。原生后端的隔离 list/read 验证与真实账号 GUI 续聊分别记录在 [VALIDATION.md](../VALIDATION.md)。
+
 ## 活动会话、代理与跨账号连续性
 
 Codex 的 `ModelClient` 是 session-scoped，构造参数应在会话生命期内保持稳定：[client.rs L470–518](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/core/src/client.rs#L470-L518)。app-server 配置管理也明确说明已有线程保留 session route：[config_manager.rs L261–268](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/app-server/src/config_manager.rs#L261-L268)。认证管理还有缓存与显式 reload 路径。因此根文件已更新不能独立证明活动 GUI 下一回合已采用新 endpoint 或 auth；首次配置维护后需要 GUI 重载的运行验收。
