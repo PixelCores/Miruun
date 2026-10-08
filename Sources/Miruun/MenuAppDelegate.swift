@@ -17,7 +17,8 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
     private let historyInterval = NSPopUpButton(frame: .zero, pullsDown: false)
     private let historyVersions = NSPopUpButton(frame: .zero, pullsDown: false)
     private let historyNow = NSButton(title: "立即备份", target: nil, action: nil)
-    private let historyExport = NSButton(title: "导出所选版本…", target: nil, action: nil)
+    private let historyExport = NSButton(title: "导出版本…", target: nil, action: nil)
+    private let historyMigrate = NSButton(title: "迁移副本…", target: nil, action: nil)
     private let historyStatus = NSTextField(wrappingLabelWithString: "尚未备份")
     private var historyViews: [NSView] = []
     private var timer: DispatchSourceTimer? // worker queue only
@@ -522,6 +523,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         historyInterval.isEnabled = !terminating && !isDiscovering
         historyVersions.isEnabled = canBackup && !historySnapshots.isEmpty
         historyExport.isEnabled = canBackup && historyVersions.indexOfSelectedItem >= 0 && !historySnapshots.isEmpty
+        historyMigrate.isEnabled = historyExport.isEnabled
         refreshMoonAnimation()
 
     }
@@ -703,7 +705,10 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         historyVersions.action = #selector(selectHistoryVersion)
         historyExport.target = self
         historyExport.action = #selector(exportHistoryVersion)
-        styleButton(historyExport, frame: NSRect(x: 30, y: 263, width: 272, height: 28))
+        styleButton(historyExport, frame: NSRect(x: 30, y: 263, width: 126, height: 28))
+        historyMigrate.target = self
+        historyMigrate.action = #selector(migrateHistoryVersion)
+        styleButton(historyMigrate, frame: NSRect(x: 168, y: 263, width: 134, height: 28))
         let scroll = NSScrollView(frame: NSRect(x: 30, y: 304, width: 272, height: 58))
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
@@ -718,7 +723,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         scope.frame = NSRect(x: 30, y: 371, width: 272, height: 34)
         scope.font = .systemFont(ofSize: 10)
         scope.textColor = MenuPanelView.color(0xC9D2DD)
-        historyViews = [caption, intervalLabel, historyPageToggle, historyInterval, historyNow, reveal, historyVersions, historyExport, scroll, scope]
+        historyViews = [caption, intervalLabel, historyPageToggle, historyInterval, historyNow, reveal, historyVersions, historyExport, historyMigrate, scroll, scope]
         for view in historyViews { panelView.addSubview(view) }
     }
 
@@ -755,7 +760,7 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         guard historySnapshots.indices.contains(index) else { return }
         let snapshot = historySnapshots[index]
         let bytes = snapshot.files.reduce(Int64(0)) { $0 + $1.byteCount }
-        setHistoryStatus("版本包含 \(snapshot.files.count) 个文件 · \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))\n导出到新目录后可查看完整文件；不会覆盖当前 Codex。")
+        setHistoryStatus("版本包含 \(snapshot.files.count) 个文件 · \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))\n可导出查看文件，或生成独立的 Codex 迁移副本。")
     }
 
     private func loadHistoryBackups() {
@@ -850,31 +855,50 @@ final class MenuAppDelegate: NSObject, NSApplicationDelegate {
         else { setHistoryStatus("尚未创建备份目录，请先完成一次备份。") }
     }
 
-    @objc private func exportHistoryVersion() {
+    @objc private func exportHistoryVersion() { saveHistoryVersion(migrate: false) }
+
+    @objc private func migrateHistoryVersion() { saveHistoryVersion(migrate: true) }
+
+    private func saveHistoryVersion(migrate: Bool) {
         let index = historyVersions.indexOfSelectedItem
-        guard !historyBusy, !transitioning, historySnapshots.indices.contains(index) else { return }
+        guard !historyBusy, !transitioning, !terminating, !isDiscovering, !isChoosingHome,
+              historySnapshots.indices.contains(index) else { return }
         let snapshot = historySnapshots[index]
         isChoosingHome = true
-        defer { isChoosingHome = false; showWindow() }
+        defer {
+            isChoosingHome = false
+            if !terminating { showWindow() }
+        }
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true; panel.canChooseFiles = false
         panel.canCreateDirectories = true; panel.allowsMultipleSelection = false
-        panel.title = "选择导出位置"
-        panel.message = "将在这里新建独立文件夹，保留原目录结构，包含聊天与记忆原文。"
+        panel.title = migrate ? "选择迁移副本位置" : "选择导出位置"
+        panel.message = migrate
+            ? "将在这里生成独立的聊天与记忆数据目录。完成后需将 Codex 的 CODEX_HOME 指向该目录，再另行登录目标账号。"
+            : "将在这里新建独立文件夹，保留原目录结构，包含聊天与记忆原文。"
         guard panel.runModal() == .OK, let parent = panel.url else { return }
-        let destination = parent.appendingPathComponent("Miruun-" + snapshot.id, isDirectory: true)
+        guard !historyBusy, !transitioning, !terminating, !isDiscovering else { return }
+        let destination = parent.appendingPathComponent((migrate ? "Codex-Miruun-" : "Miruun-") + snapshot.id, isDirectory: true)
         historyBusy = true
-        setHistoryStatus("正在校验并导出所选版本…")
+        setHistoryStatus(migrate ? "正在校验并生成迁移副本…" : "正在校验并导出所选版本…")
         refreshControls()
         historyWorker.async {
-            let result = Result { try CodexHistoryBackup.export(snapshot, repository: CodexHistoryBackup.defaultRepository, destination: destination) }
+            let result = Result {
+                if migrate {
+                    try CodexHistoryBackup.migrate(snapshot, repository: CodexHistoryBackup.defaultRepository, destination: destination)
+                } else {
+                    try CodexHistoryBackup.export(snapshot, repository: CodexHistoryBackup.defaultRepository, destination: destination)
+                }
+            }
             DispatchQueue.main.async {
                 self.historyBusy = false
                 guard !self.terminating else { return }
                 switch result {
                 case .success:
                     self.historyError = nil
-                    self.setHistoryStatus("版本已导出到：\n" + destination.path)
+                    self.setHistoryStatus(migrate
+                        ? "迁移副本已生成：\n" + destination.path + "\n请将 Codex 的 CODEX_HOME 指向该目录，再登录目标账号。"
+                        : "版本已导出到：\n" + destination.path)
                     NSWorkspace.shared.activateFileViewerSelecting([destination])
                 case .failure(let error): self.setHistoryStatus(error.localizedDescription, failed: true)
                 }

@@ -1,5 +1,25 @@
 # Miruun 验证记录
 
+## 未发布：Codex 本地历史与记忆迁移副本
+
+日期：2026 年 10 月 8 日。基于 `origin/main@eee295073c218eb643a9980c5ef7b890976f4ba7`，分支 `codex/local-history-migration`；源码版本未变。
+
+备份页新增“迁移副本…”，复用现有版本、对象校验、私有目录与原子发布。只在新目录中调整已识别的 legacy 历史数据库路径，保留原始会话和已有本地记忆，排除队列与目标数据库；生成反映最终哈希的清单和来源回执。操作不启动 Codex、不调用模型，也不复制账号认证或配置。
+
+| 验证 | 结果 |
+| --- | --- |
+| 完整测试与打包 | `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer bash scripts/build-app.sh --no-reveal --disable-sandbox`：173 项 XCTest 通过（Engine 160、Core 13），Release 与 plist 检查通过；日志 `/private/tmp/miruun-local-migration-final-build.log` |
+| 新增回归 | 13 个迁移测试，覆盖原始字节/身份/项目与记忆水位保留、路径和更新时间调整、原生时间戳触发器、索引状态、队列排除、最终哈希、原备份可导出；覆盖覆盖写入/链接/损坏对象、未知格式/触发器、未完成数据库迁移或任务、无效路径/时间的拒绝与不发布 |
+| 真实格式合成迁移 | 用本机 Codex 0.160.1 在隔离目录生成数据库，再填入合成 legacy 历史和记忆；Swift harness 调用实际 create/migrate，8 个文件迁移为 6 个，全部最终哈希通过。证据 `/private/tmp/miruun-migration-harness.pXx1RM/` 的 `main.swift`、`compile-final.log`、`run-final.log` |
+| 原生后端读取 | 对全新目标执行 initialize、thread/list、thread/read、thread/queue/list：原 ID 和路径正确，两轮内容及 compaction 占位可读，原始 JSONL 哈希不变，队列为空；记忆文件、产物和成功水位不变，旧 worker/ownership/lease 清空，首次启动前后线程秒/毫秒更新时间不变。证据 `/private/tmp/miruun-relocation-schema-u1q536y0/final-target-result.json` |
+| 重建索引 | 仅在上述合成目标清空回填状态再读，确认原生扫描仍保留原秒级更新时间。Codex 自身排序逻辑使毫秒值增加 1 ms；不声称强制重建后的毫秒值完全不变。记忆产物/水位、历史字节及队列检查仍通过，证据同目录 `final-rebuild-result.json` |
+| AppKit 布局 | 隔离控件按实际字体测量：两个标题均为 62×15 pt，分别位于 126×28 与 134×28 pt 按钮内，无重叠；长路径状态高度扩展至 168 pt，由 58 pt 视口滚动。覆盖空数据、运行中、长成功信息、错误信息；日志 `/private/tmp/miruun-migration-ui-check.log`。没有代替真实菜单/目录选择交互验收 |
+| 独立审查 | 修复原生五个合法触发器被拒绝的问题，仅允许名称与归一化 SQL 同时匹配；修复复制 mtime 导致原生回填改变历史更新时间的问题，恢复文件时间并保留已完成索引、拒绝旧活动回填租约。最终增量复核无未解决问题；`git diff --check` 通过 |
+
+原生后端探针使用独立 HOME/CODEX_HOME，沙箱拒绝网络及 `/Users` 读写，关闭记忆生成等后台功能；仅 list/read/queue 查询，没有 resume、turn 或模型请求。没有读取真实私人历史、改变用户账号、安装替换运行中的 Miruun，或修改主 checkout。所有运行证据均为合成数据。
+
+范围只覆盖通过检查的 legacy JSONL 与 state_5/memories_1 数据库；分页/压缩会话文件、父历史链、未知结构、未完成记忆任务或索引回填仍会明确拒绝。没有索引的会话文件缺少原始文件时间元数据，不能承诺其首次建立索引后的更新时间完全还原。外部工作区、附件与正文路径保持原值；此功能是同机一次性副本，非云端账号合并或持续同步。真实账号 B 的 GUI 展示、权限筛选、模型续聊、加密上下文及后续自动记忆行为尚未验收；续聊或新记忆生成仍可能消耗 Token。签名、公证、故障断电和真实大规模历史压力测试未执行。
+
 ## 未发布：石质猫爪月球与月食渐变
 
 日期：2026 年 10 月 7 日。基于 `origin/main@44cc16ecc5ea08e18f8d8bcdc0064a1f5d410ddb`，分支 `feature/lunar-eclipse-status`；源码版本未变。
